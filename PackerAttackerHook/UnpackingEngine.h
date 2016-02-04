@@ -67,6 +67,7 @@ private:
     MemoryBlockTracker<TrackedMemoryBlock> blacklistedBlocks;
     std::map<DWORD, MemoryBlockTracker<TrackedCopiedMemoryBlock>> remoteMemoryBlocks;
     std::map<DWORD, DWORD> suspendedThreads;
+	MemoryRegionTracker trackedregions;
 
     void ignoreHooks(bool should) { this->bypassHooks = should; }
     bool shouldIgnoreHooks() { return this->bypassHooks; }
@@ -75,6 +76,7 @@ private:
     void startTrackingRemoteMemoryBlock(DWORD pid, DWORD baseAddress, DWORD size, unsigned char* data);
     void dumpRemoteMemoryBlocks();
     void dumpMemoryBlock(TrackedMemoryBlock block, DWORD ep);
+	void dumpMemoryRegion(DWORD data);
     void dumpMemoryBlock(char* fileName, DWORD size, const unsigned char* data);
     bool isSelfProcess(HANDLE process);
     DWORD getProcessIdIfRemote(HANDLE process);

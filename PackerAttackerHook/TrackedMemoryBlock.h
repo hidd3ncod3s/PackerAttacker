@@ -2,6 +2,8 @@
 #include <Windows.h>
 #include <list>
 #include <vector>
+#include <algorithm>
+#include "Logger.h"
 
 struct TrackedMemoryBlock
 {
@@ -155,4 +157,137 @@ struct MemoryBlockTracker
 
         this->trackedMemoryBlocks.erase(it);
     }
+};
+
+
+class MemoryRegionTracker
+{
+	struct _RegionInfo{
+		DWORD startAddress, endAddress, size;
+		bool removed;
+		_RegionInfo(DWORD _startAddress, DWORD _size)
+		{
+			startAddress= _startAddress;
+			endAddress= _startAddress + (_size - 1);
+			size= _size;
+			removed= false;
+		}
+	};
+
+	void printTrackingInfo()
+	{
+		auto it = trackedMemoryRegion.begin();
+        for (; it != trackedMemoryRegion.end(); it++){
+			Logger::getInstance()->write(LOG_INFO, "StartAddress= 0x%08x, EndAddress= 0x%08x, Size= 0x%08x, removed= %d\n", it->startAddress, it->endAddress, it->size, it->removed);
+		}
+	}
+
+public:
+
+	std::list<_RegionInfo>::iterator nullMarker()
+    {
+        return this->trackedMemoryRegion.end();
+    }
+
+	std::list<_RegionInfo>::iterator findTrackedRegion(DWORD oeip)
+    {
+        for (auto it = this->trackedMemoryRegion.begin(); it != this->trackedMemoryRegion.end(); ++it){
+			//Logger::getInstance()->write(LOG_INFO, "Before IF condition - StartAddress= 0x%08x, EndAddress= 0x%08x, Size= 0x%08x, removed= %d\n", it->startAddress, it->endAddress, it->size, it->removed);
+			if (it->startAddress <= oeip && oeip <= it->endAddress){
+				//Logger::getInstance()->write(LOG_INFO, "Inside IF. StartAddress= 0x%08x, EndAddress= 0x%08x, Size= 0x%08x, removed= %d\n", it->startAddress, it->endAddress, it->size, it->removed);
+                return it;
+			}/* else {
+				Logger::getInstance()->write(LOG_INFO, "Else part.\n");
+			}*/
+		}
+
+        return this->trackedMemoryRegion.end();
+    }
+
+    void startTracking(DWORD new_startaddress, DWORD new_size)
+    {
+		Logger::getInstance()->write(LOG_INFO, "new_startaddress= 0x%08x, new_size= 0x%08x\nBefore tracking this.\n", new_startaddress, new_size);
+		printTrackingInfo();
+
+		// Merge overlapping regions.
+		auto it = trackedMemoryRegion.begin();
+        for (; it != trackedMemoryRegion.end(); it++){
+			if (it->startAddress <= new_startaddress && new_startaddress <= it->endAddress){
+				auto new_endaddress= new_startaddress + (new_size - 1);
+				Logger::getInstance()->write(LOG_INFO, "Overlapping region. StartAddress= 0x%08x, EndAddress= 0x%08x, Size= 0x%08x\n", it->startAddress, it->endAddress, it->size);
+				if (new_endaddress > it->endAddress){
+					// Go past the current region.
+
+					//Fixed this region
+					it->size += (new_endaddress - it->endAddress);
+					it->endAddress= it->startAddress + it->size;
+
+					auto nx = std::next(it, 1);
+					while (nx != trackedMemoryRegion.end() && it->startAddress <= nx->startAddress && nx->startAddress <= it->endAddress){
+						nx->removed= true; //remove the next region
+						if (nx->endAddress <= it->endAddress){ // next region is taken care by current region.
+							nx = std::next(nx, 1);
+							continue;
+						}
+						it->endAddress= nx->endAddress;
+						it->size= it->endAddress - it->startAddress;
+						nx = std::next(nx, 1);
+					}
+					//
+					trackedMemoryRegion.remove_if([](const _RegionInfo & o) { return o.removed; });
+				}
+
+				Logger::getInstance()->write(LOG_INFO, "After fixing overlapping regions\n");
+				printTrackingInfo();
+
+				break;
+			}
+		}
+		
+		// New region
+		if (it == trackedMemoryRegion.end()){
+			Logger::getInstance()->write(LOG_INFO, "Its a New region.\n");
+			trackedMemoryRegion.push_back(_RegionInfo(new_startaddress,new_size));
+			// do the sorting now.
+			trackedMemoryRegion.sort([](const _RegionInfo & a, const _RegionInfo & b) { return a.startAddress < b.startAddress; }); // sort it based on the startaddress
+
+			Logger::getInstance()->write(LOG_INFO, "After adding new region\n");
+			printTrackingInfo();
+		}
+
+		// Contigous region. At a time we will have only one contigous region.
+		it = trackedMemoryRegion.begin();
+		bool didamerge= false;
+        for (; it != trackedMemoryRegion.end(); it++){
+			auto nx = std::next(it, 1);
+			while (nx != trackedMemoryRegion.end() && nx->startAddress == it->endAddress+1){
+				Logger::getInstance()->write(LOG_INFO, "Doing merging of contigous regions\n");
+				nx->removed= true;
+				it->endAddress= nx->endAddress;
+				it->size= it->endAddress - it->startAddress;
+				nx = std::next(nx, 1);
+				didamerge= true;
+			}
+
+			if(didamerge){
+				trackedMemoryRegion.remove_if([](const _RegionInfo & o) { return o.removed; });
+				Logger::getInstance()->write(LOG_INFO, "After merging contigous regions\n");
+				printTrackingInfo();
+				break;
+			}
+		}
+
+		Logger::getInstance()->write(LOG_INFO, "\nFinished tracking this region\n");
+
+    }
+
+
+
+	/*void stopTracking(DWORD address, DWORD size)
+    {
+        this->stopTracking(this->findTracked(address, size));
+    }*/
+
+private:
+	std::list<_RegionInfo> trackedMemoryRegion;
 };

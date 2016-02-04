@@ -110,7 +110,7 @@ void UnpackingEngine::startTrackingPEMemoryBlocks()
     auto baseOfData = MakePointer<DWORD, HMODULE>((HMODULE)mainModule, ntHeaders->OptionalHeader.BaseOfData);
     auto entryPoint = MakePointer<DWORD, HMODULE>((HMODULE)mainModule, ntHeaders->OptionalHeader.AddressOfEntryPoint);
 
-    Logger::getInstance()->write(LOG_INFO, "PE HEADER SAYS\n\tCode: 0x%0x\n\tData: 0x%0x\n\tEP: 0x%0x", baseOfCode, baseOfData, entryPoint);
+    Logger::getInstance()->write(LOG_INFO, "PE HEADER SAYS\n\tModule: 0x%08x\n\tCode: 0x%08x\n\tData: 0x%08x\n\tEP: 0x%08x", mainModule, baseOfCode, baseOfData, entryPoint);
  
 
     bool eipAlreadyIgnored = false;
@@ -192,6 +192,25 @@ void UnpackingEngine::dumpMemoryBlock(TrackedMemoryBlock block, DWORD ep)
     this->dumpMemoryBlock(fileName, block.size, (const unsigned char*)block.startAddress);
 }
 
+void UnpackingEngine::dumpMemoryRegion(DWORD ep)
+{
+	char fileName[MAX_PATH];
+
+	Logger::getInstance()->write(LOG_INFO, "ep= 0x%08x\n", ep);
+
+	auto it= this->trackedregions.findTrackedRegion(ep);
+	if (it == this->trackedregions.nullMarker())
+		return;
+
+	Logger::getInstance()->write(LOG_INFO, "StartAddress= 0x%08x, EndAddress= 0x%08x, Size= 0x%08x, removed= %d\n", it->startAddress, it->endAddress, it->size, it->removed);
+
+	sprintf(fileName, "C:\\dumps\\[%d]_%d_0x%08x_to_0x%08x_EP_0x%08x_IDX_%d.RDMP", this->processID, GetTickCount(), it->startAddress, it->endAddress, ep, ep - it->startAddress);
+
+	Logger::getInstance()->write(LOG_INFO, "Filename= %s\n", fileName);
+
+	this->dumpMemoryBlock(fileName, it->size, (const unsigned char*)it->startAddress);
+}
+
 void UnpackingEngine::dumpMemoryBlock(char* fileName, DWORD size, const unsigned char* data)
 {
     std::fstream file(fileName, std::ios::out | std::ios::binary);
@@ -269,11 +288,27 @@ ULONG UnpackingEngine::processMemoryBlockFromHook(const char* source, DWORD addr
     return _oldProtection;
 }
 
+/*
+#define PAGE_NOACCESS          0x01     // winnt
+#define PAGE_READONLY          0x02     // winnt
+#define PAGE_READWRITE         0x04     // winnt
+#define PAGE_WRITECOPY         0x08     // winnt
+#define PAGE_EXECUTE           0x10     // winnt
+#define PAGE_EXECUTE_READ      0x20     // winnt
+#define PAGE_EXECUTE_READWRITE 0x40     // winnt
+#define PAGE_EXECUTE_WRITECOPY 0x80     // winnt
+#define PAGE_GUARD            0x100     // winnt
+#define PAGE_NOCACHE          0x200     // winnt
+*/
 NTSTATUS UnpackingEngine::onNtProtectVirtualMemory(HANDLE process, PVOID* baseAddress, PULONG numberOfBytes, ULONG newProtection, PULONG OldProtection)
 {
     /* do original protection */
     ULONG _oldProtection;
+
     auto ret = this->origNtProtectVirtualMemory(process, baseAddress, numberOfBytes, newProtection, &_oldProtection);
+
+	if (this->isSelfProcess(process))
+		this->trackedregions.startTracking((DWORD)*baseAddress, (DWORD)*numberOfBytes);
 
     if (OldProtection)
         *OldProtection = _oldProtection;
@@ -548,6 +583,8 @@ long UnpackingEngine::onShallowException(PEXCEPTION_POINTERS info)
         this->blacklistedBlocks.startTracking(*it);
         this->dumpMemoryBlock(*it, exceptionAddress);
         this->executableBlocks.stopTracking(it);
+
+		this->dumpMemoryRegion(exceptionAddress);
 
         Logger::getInstance()->write(LOG_INFO, "STATUS_ACCESS_VIOLATION execute on 0x%08x triggered execute hook!", exceptionAddress);
 

@@ -58,9 +58,20 @@ void UnpackingEngine::initialize()
     HOOK_GET_ORIG(this, "ntdll.dll", NtResumeThread);
     HOOK_GET_ORIG(this, "ntdll.dll", NtDelayExecution);
     HOOK_GET_ORIG(this, "ntdll.dll", NtAllocateVirtualMemory);
+	HOOK_GET_ORIG(this, "ntdll.dll", NtFreeVirtualMemory);
     HOOK_GET_ORIG(this, "Kernel32.dll", CreateProcessInternalW);
 
-    Logger::getInstance()->write(LOG_INFO, "Finding original function addresses... DONE");
+	Logger::getInstance()->write(LOG_INFO, "Finding original function addresses...");
+	Logger::getInstance()->write(LOG_INFO, "NtProtectVirtualMemory= %08x", this->origNtProtectVirtualMemory);
+	Logger::getInstance()->write(LOG_INFO, "NtWriteVirtualMemory= %08x", this->origNtWriteVirtualMemory);
+	Logger::getInstance()->write(LOG_INFO, "NtCreateThread= %08x", this->origNtCreateThread);
+	Logger::getInstance()->write(LOG_INFO, "NtMapViewOfSection= %08x", this->origNtMapViewOfSection);
+	Logger::getInstance()->write(LOG_INFO, "NtResumeThread= %08x", this->origNtResumeThread);
+	Logger::getInstance()->write(LOG_INFO, "NtDelayExecution= %08x", this->origNtDelayExecution);
+	Logger::getInstance()->write(LOG_INFO, "NtAllocateVirtualMemory= %08x", this->origNtAllocateVirtualMemory);
+	Logger::getInstance()->write(LOG_INFO, "NtFreeVirtualMemory= %08x", this->origNtFreeVirtualMemory);
+	Logger::getInstance()->write(LOG_INFO, "CreateProcessInternalW= %08x", this->origCreateProcessInternalW);
+    Logger::getInstance()->write(LOG_INFO, "Finished finding original function addresses... DONE");
 
     this->startTrackingPEMemoryBlocks();
 
@@ -69,13 +80,16 @@ void UnpackingEngine::initialize()
     this->hooks->doTransaction([=](){
         this->hooks->placeShallowExceptionHandlerHook(&UnpackingEngine::_onShallowException);
         this->hooks->placeDeepExceptionHandlerHook(&UnpackingEngine::_onDeepException);
-        HOOK_SET(this, this->hooks, NtProtectVirtualMemory);
+
+		HOOK_SET(this, this->hooks, NtProtectVirtualMemory);
+        HOOK_SET(this, this->hooks, NtMapViewOfSection);
+        HOOK_SET(this, this->hooks, NtAllocateVirtualMemory);
+		HOOK_SET(this, this->hooks, NtFreeVirtualMemory);
+
         HOOK_SET(this, this->hooks, NtWriteVirtualMemory);
         HOOK_SET(this, this->hooks, NtCreateThread);
-        HOOK_SET(this, this->hooks, NtMapViewOfSection);
         HOOK_SET(this, this->hooks, NtResumeThread);
         HOOK_SET(this, this->hooks, NtDelayExecution);
-        HOOK_SET(this, this->hooks, NtAllocateVirtualMemory);
         HOOK_SET(this, this->hooks, CreateProcessInternalW);
     });
 
@@ -300,10 +314,98 @@ ULONG UnpackingEngine::processMemoryBlockFromHook(const char* source, DWORD addr
 #define PAGE_GUARD            0x100     // winnt
 #define PAGE_NOCACHE          0x200     // winnt
 */
+
+std::string UnpackingEngine::retProtectionString(ULONG protectionbits)
+{
+	std::string protectionstring;
+	protectionstring.reserve(64);
+
+	if(protectionbits & PAGE_NOACCESS){
+		protectionstring.append("PAGE_NOACCESS");
+		protectionbits &= (~PAGE_NOACCESS);
+	}
+	if(protectionbits & PAGE_READONLY){
+		if(protectionstring.length() > 0)
+			protectionstring.append("|");
+		protectionstring.append("PAGE_READONLY");
+		protectionbits &= (~PAGE_READONLY);
+	}
+	if(protectionbits & PAGE_READWRITE){
+		if(protectionstring.length() > 0)
+			protectionstring.append("|");
+		protectionstring.append("PAGE_READWRITE");
+		protectionbits &= (~PAGE_READWRITE);
+	}
+	if(protectionbits & PAGE_WRITECOPY){
+		if(protectionstring.length() > 0)
+			protectionstring.append("|");
+		protectionstring.append("PAGE_WRITECOPY");
+		protectionbits &= (~PAGE_WRITECOPY);
+	}
+	if(protectionbits & PAGE_EXECUTE){
+		if(protectionstring.length() > 0)
+			protectionstring.append("|");
+		protectionstring.append("PAGE_EXECUTE");
+		protectionbits &= (~PAGE_EXECUTE);
+	}
+	if(protectionbits & PAGE_EXECUTE_READ){
+		if(protectionstring.length() > 0)
+			protectionstring.append("|");
+		protectionstring.append("PAGE_EXECUTE_READ");
+		protectionbits &= (~PAGE_EXECUTE_READ);
+	}
+	if(protectionbits & PAGE_EXECUTE_READWRITE){
+		if(protectionstring.length() > 0)
+			protectionstring.append("|");
+		protectionstring.append("PAGE_EXECUTE_READWRITE");
+		protectionbits &= (~PAGE_EXECUTE_READWRITE);
+	}
+	if(protectionbits & PAGE_EXECUTE_WRITECOPY){
+		if(protectionstring.length() > 0)
+			protectionstring.append("|");
+		protectionstring.append("PAGE_EXECUTE_WRITECOPY");
+		protectionbits &= (~PAGE_EXECUTE_WRITECOPY);
+	}
+	if(protectionbits & PAGE_GUARD){
+		if(protectionstring.length() > 0)
+			protectionstring.append("|");
+		protectionstring.append("PAGE_GUARD");
+		protectionbits &= (~PAGE_GUARD);
+	}
+	if(protectionbits & PAGE_NOCACHE){
+		if(protectionstring.length() > 0)
+			protectionstring.append("|");
+		protectionstring.append("PAGE_NOCACHE");
+		protectionbits &= (~PAGE_NOCACHE);
+	}
+	if(protectionbits & MEM_COMMIT){
+		if(protectionstring.length() > 0)
+			protectionstring.append("|");
+		protectionstring.append("MEM_COMMIT");
+		protectionbits &= (~MEM_COMMIT);
+	}
+	if(protectionbits & MEM_RELEASE){
+		if(protectionstring.length() > 0)
+			protectionstring.append("|");
+		protectionstring.append("MEM_RELEASE");
+		protectionbits &= (~MEM_RELEASE);
+	}
+
+	if(protectionbits){
+		if(protectionstring.length() > 0)
+			protectionstring.append("|");
+		protectionstring.append("FIXMEEEEEE");
+	}
+	return protectionstring;
+}
+
+
 NTSTATUS UnpackingEngine::onNtProtectVirtualMemory(HANDLE process, PVOID* baseAddress, PULONG numberOfBytes, ULONG newProtection, PULONG OldProtection)
 {
     /* do original protection */
     ULONG _oldProtection;
+
+	Logger::getInstance()->write(LOG_INFO, "NtProtectVirtualMemory(TargetPID %d, 0x%08x, 0x%08x, 0x%08x(%s))\n", GetProcessId(process), (DWORD)*baseAddress, (DWORD)*numberOfBytes, newProtection, retProtectionString(newProtection).c_str());
 
     auto ret = this->origNtProtectVirtualMemory(process, baseAddress, numberOfBytes, newProtection, &_oldProtection);
 
@@ -318,7 +420,7 @@ NTSTATUS UnpackingEngine::onNtProtectVirtualMemory(HANDLE process, PVOID* baseAd
         return ret;
 
     if (ret == 0 && this->hooksReady)
-        Logger::getInstance()->write(LOG_INFO, "NtProtectVirtualMemory(TargetPID %d, 0x%08x, 0x%08x, 0x%08x, 0x%08x)\n", GetProcessId(process), (DWORD)*baseAddress, (DWORD)*numberOfBytes, newProtection, OldProtection);
+		Logger::getInstance()->write(LOG_INFO, "NtProtectVirtualMemory(TargetPID %d, 0x%08x, 0x%08x, 0x%08x(%s), 0x%08x(%s))\n", GetProcessId(process), (DWORD)*baseAddress, (DWORD)*numberOfBytes, newProtection, retProtectionString(newProtection).c_str(), *OldProtection, retProtectionString(*OldProtection).c_str());
 
     if (ret == 0 && this->hooksReady && this->isSelfProcess(process))
     {
@@ -415,6 +517,8 @@ NTSTATUS WINAPI UnpackingEngine::onNtMapViewOfSection(
     HANDLE SectionHandle, HANDLE ProcessHandle, PVOID *BaseAddress, ULONG ZeroBits, ULONG CommitSize,
     PLARGE_INTEGER SectionOffset, PULONG ViewSize, SECTION_INHERIT InheritDisposition, ULONG AllocationType, ULONG Protect)
 {
+	Logger::getInstance()->write(LOG_INFO, "PRE-NtMapViewOfSection(TargetPID %d, Address 0x%08x, Size 0x%08x)\n", GetProcessId(ProcessHandle), (DWORD)*BaseAddress, (DWORD)*ViewSize);
+
     if (this->hooksReady)
         Logger::getInstance()->write(LOG_INFO, "PRE-NtMapViewOfSection(TargetPID %d, Address 0x%08x, Size 0x%08x)\n", GetProcessId(ProcessHandle), (DWORD)*BaseAddress, (DWORD)*ViewSize);
 
@@ -478,19 +582,40 @@ NTSTATUS WINAPI UnpackingEngine::onNtDelayExecution(BOOLEAN alertable, PLARGE_IN
     return this->origNtDelayExecution(alertable, time);
 }
 
+NTSTATUS WINAPI UnpackingEngine::onNtFreeVirtualMemory(HANDLE process, PVOID* baseAddress, PULONG RegionSize, ULONG FreeType)
+{
+	Logger::getInstance()->write(LOG_INFO, "PRE-NtFreeVirtualMemory: TargetPID %d, Address 0x%08x, RegionSize 0x%08x, FreeType 0x%08x(%s)", GetProcessId(process), (DWORD)*baseAddress, (DWORD)*RegionSize, FreeType, retProtectionString(FreeType));
+	auto ret= this->origNtFreeVirtualMemory(process, baseAddress, RegionSize, FreeType);
+	Logger::getInstance()->write(LOG_INFO, "PST-NtFreeVirtualMemory: TargetPID %d, Address 0x%08x, RegionSize 0x%08x, FreeType 0x%08x(%s)", GetProcessId(process), (DWORD)*baseAddress, (DWORD)*RegionSize, FreeType, retProtectionString(FreeType));
+	return ret;
+}
+
 NTSTATUS WINAPI UnpackingEngine::onNtAllocateVirtualMemory(HANDLE ProcessHandle, PVOID *BaseAddress, ULONG ZeroBits, PULONG RegionSize, ULONG AllocationType, ULONG Protect)
 {
+	Logger::getInstance()->write(LOG_INFO, "PRE-NtAllocateVirtualMemory(TargetPID %d, Address 0x%08x, Size 0x%08x, Protection 0x%08x(%s))\n", GetProcessId(ProcessHandle), (DWORD)*BaseAddress, (DWORD)*RegionSize, Protect, retProtectionString(Protect).c_str());
+
+	if (*BaseAddress == 0x00000000 && Protect == PAGE_EXECUTE_READWRITE){ // Debug
+		   __asm
+		   {
+				start:
+				nop
+				nop
+				nop 
+				//jmp start
+		   }
+	}
+
     if (this->inAllocationHook)
         return this->origNtAllocateVirtualMemory(ProcessHandle, BaseAddress, ZeroBits, RegionSize, AllocationType, Protect);
 
     this->inAllocationHook = true;
         if (this->hooksReady)
-            Logger::getInstance()->write(LOG_INFO, "PRE-NtAllocateVirtualMemory(TargetPID %d, Address 0x%08x, Size 0x%08x, Protection 0x%08x)\n", GetProcessId(ProcessHandle), (DWORD)*BaseAddress, (DWORD)*RegionSize, Protect);
+            Logger::getInstance()->write(LOG_INFO, "PRE-NtAllocateVirtualMemory(TargetPID %d, Address 0x%08x, Size 0x%08x, Protection 0x%08x(%s))\n", GetProcessId(ProcessHandle), (DWORD)*BaseAddress, (DWORD)*RegionSize, Protect, retProtectionString(Protect).c_str());
 
         auto ret = this->origNtAllocateVirtualMemory(ProcessHandle, BaseAddress, ZeroBits, RegionSize, AllocationType, Protect);
 
         if (this->hooksReady)
-            Logger::getInstance()->write(LOG_INFO, "PST-NtAllocateVirtualMemory(TargetPID %d, Address 0x%08x, Count 0x%08x, Protection 0x%08x) RET: 0x%08x\n", GetProcessId(ProcessHandle), (DWORD)*BaseAddress, (RegionSize) ? *RegionSize : 0, Protect, ret);
+            Logger::getInstance()->write(LOG_INFO, "PST-NtAllocateVirtualMemory(TargetPID %d, Address 0x%08x, Count 0x%08x, Protection 0x%08x(%s)) RET: 0x%08x\n", GetProcessId(ProcessHandle), (DWORD)*BaseAddress, (RegionSize) ? *RegionSize : 0, Protect, retProtectionString(Protect).c_str(), ret);
 
 
         if (ret == 0 && this->hooksReady && this->isSelfProcess(ProcessHandle))
@@ -572,16 +697,17 @@ long UnpackingEngine::onShallowException(PEXCEPTION_POINTERS info)
         /* it's an executable block being tracked */
         /* set the block back to executable */
         ULONG _oldProtection;
+		Logger::getInstance()->write(LOG_ERROR, "Trying to remove execute hook on 0x%08x, 0x%08x, 0x%08x, 0x%08x, 0x%08x!", exceptionAddress, it->startAddress, it->size, (DWORD)it->neededProtection, _oldProtection);
         auto ret = this->origNtProtectVirtualMemory(GetCurrentProcess(), (PVOID*)&it->startAddress, (PULONG)&it->size, (DWORD)it->neededProtection, &_oldProtection);
         if (ret != 0)
         {
-            Logger::getInstance()->write(LOG_ERROR, "Failed to removed execute hook on 0x%08x!", exceptionAddress);
+            Logger::getInstance()->write(LOG_ERROR, "Failed to removed execute hook on 0x%08x, 0x%08x, 0x%08x, 0x%08x, 0x%08x, 0x%08x!", exceptionAddress, it->startAddress, it->size, (DWORD)it->neededProtection, _oldProtection, ret);
             return EXCEPTION_CONTINUE_SEARCH; /* couldn't set page back to executable, wtf? */
         }
 
         /* dump the motherfucker and stop tracking it */
         this->blacklistedBlocks.startTracking(*it);
-        this->dumpMemoryBlock(*it, exceptionAddress);
+        //this->dumpMemoryBlock(*it, exceptionAddress); Hideme
         this->executableBlocks.stopTracking(it);
 
 		this->dumpMemoryRegion(exceptionAddress);

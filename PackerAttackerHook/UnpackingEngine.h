@@ -79,6 +79,7 @@ private:
 	void dumpMemoryRegion(DWORD data);
     void dumpMemoryBlock(char* fileName, DWORD size, const unsigned char* data);
     bool isSelfProcess(HANDLE process);
+	std::string retProtectionString(ULONG protectionbits);
     DWORD getProcessIdIfRemote(HANDLE process);
     ULONG processMemoryBlockFromHook(const char* source, DWORD address, DWORD size, ULONG newProtection, ULONG oldProtection, bool considerOldProtection);
 
@@ -105,6 +106,9 @@ private:
     HOOK_DEFINE_2(NTSTATUS, NTAPI, NtDelayExecution, BOOLEAN, PLARGE_INTEGER);
     /* NtAllocateVirtualMemory hook */
     HOOK_DEFINE_6(NTSTATUS, NTAPI, NtAllocateVirtualMemory, HANDLE, PVOID*, ULONG, PULONG, ULONG, ULONG);
+
+	/* NtFreeVirtualMemory hook */
+    HOOK_DEFINE_4(NTSTATUS, NTAPI, NtFreeVirtualMemory, HANDLE, PVOID*, PULONG, ULONG);
 
     /* exception handler for hooking execution on tracked pages */
     long onShallowException(PEXCEPTION_POINTERS info);

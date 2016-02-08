@@ -141,12 +141,18 @@ struct MemoryBlockTracker
     }
     void startTracking(TrackType right)
     {
+		Logger::getInstance()->write(LOG_INFO, "StartAddress= 0x%08x, EndAddress= 0x%08x, Size= 0x%08x, neededProtection= %d\n", right.startAddress, right.endAddress, right.size, right.neededProtection);
         auto it = this->findTracked(right);
         if (it != this->nullMarker())
             it->mergeWith(right);
         else
             this->trackedMemoryBlocks.push_back(right);
+
+		for (auto it = this->trackedMemoryBlocks.begin(); it != this->trackedMemoryBlocks.end(); it++){
+			Logger::getInstance()->write(LOG_INFO, "Block: StartAddress= 0x%08x, EndAddress= 0x%08x, Size= 0x%08x, neededProtection= %d\n", it->startAddress, it->endAddress, it->size, it->neededProtection);
+		}
     }
+
     void stopTracking(DWORD address, DWORD size)
     {
         this->stopTracking(this->findTracked(address, size));
@@ -206,6 +212,7 @@ public:
 
     void startTracking(DWORD new_startaddress, DWORD new_size)
     {
+		return;
 		Logger::getInstance()->write(LOG_INFO, "new_startaddress= 0x%08x, new_size= 0x%08x\nBefore tracking this.\n", new_startaddress, new_size);
 		printTrackingInfo();
 

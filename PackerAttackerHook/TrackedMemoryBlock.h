@@ -13,7 +13,7 @@ struct TrackedMemoryBlock
     TrackedMemoryBlock(DWORD _startAddress, DWORD _size, DWORD _neededProtection = NULL)
     {
         this->startAddress = _startAddress;
-        this->endAddress = _startAddress + _size;
+        this->endAddress = _startAddress + _size - 1;
         this->size = _size;
         this->neededProtection = _neededProtection;
     }

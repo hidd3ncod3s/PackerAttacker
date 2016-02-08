@@ -78,7 +78,9 @@ private:
     void dumpMemoryBlock(TrackedMemoryBlock block, DWORD ep);
 	void dumpMemoryRegion(DWORD data);
     void dumpMemoryBlock(char* fileName, DWORD size, const unsigned char* data);
+	void dumpMemoryBlockW(wchar_t* fileName, DWORD size, const unsigned char* data);
     bool isSelfProcess(HANDLE process);
+	bool FreetheseBlocks(PVOID baseAddress, ULONG numberOfBytes);
 	std::string retProtectionString(ULONG protectionbits);
     DWORD getProcessIdIfRemote(HANDLE process);
     ULONG processMemoryBlockFromHook(const char* source, DWORD address, DWORD size, ULONG newProtection, ULONG oldProtection, bool considerOldProtection);

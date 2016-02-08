@@ -17,6 +17,7 @@ UnpackingEngine::UnpackingEngine(void)
     this->hooksReady = false;
     this->inAllocationHook = false;
     this->bypassHooks = false;
+	Logger::getInstance();
 }
 
 
@@ -200,10 +201,10 @@ void UnpackingEngine::dumpRemoteMemoryBlocks()
 
 void UnpackingEngine::dumpMemoryBlock(TrackedMemoryBlock block, DWORD ep)
 {
-    char fileName[MAX_PATH];
-    sprintf(fileName, "C:\\dumps\\[%d]_%d_0x%08x_to_0x%08x_EP_0x%08x_IDX_%d.DMP", this->processID, GetTickCount(), block.startAddress, block.endAddress, ep, ep - block.startAddress);
+    wchar_t fileName[MAX_PATH];
+    swprintf(fileName, L"C:\\dumps\\[%d]_%d_0x%08x_to_0x%08x_EP_0x%08x_IDX_%d.DMP", this->processID, GetTickCount(), block.startAddress, block.endAddress, ep, ep - block.startAddress);
 
-    this->dumpMemoryBlock(fileName, block.size, (const unsigned char*)block.startAddress);
+    this->dumpMemoryBlockW(fileName, block.size, (const unsigned char*)block.startAddress);
 }
 
 void UnpackingEngine::dumpMemoryRegion(DWORD ep)
@@ -226,6 +227,19 @@ void UnpackingEngine::dumpMemoryRegion(DWORD ep)
 }
 
 void UnpackingEngine::dumpMemoryBlock(char* fileName, DWORD size, const unsigned char* data)
+{
+    std::fstream file(fileName, std::ios::out | std::ios::binary);
+    if (file.is_open())
+    {
+        for (int i = 0; i < size; i++)
+            file.write((const char*)&data[i], 1);
+        file.close();
+    }
+    else
+        Logger::getInstance()->write(LOG_ERROR, "Failed to create dump file with name '%s'!", fileName);
+}
+
+void UnpackingEngine::dumpMemoryBlockW(wchar_t* fileName, DWORD size, const unsigned char* data)
 {
     std::fstream file(fileName, std::ios::out | std::ios::binary);
     if (file.is_open())
@@ -390,6 +404,12 @@ std::string UnpackingEngine::retProtectionString(ULONG protectionbits)
 		protectionstring.append("MEM_RELEASE");
 		protectionbits &= (~MEM_RELEASE);
 	}
+	if(protectionbits & MEM_DECOMMIT){
+		if(protectionstring.length() > 0)
+			protectionstring.append("|");
+		protectionstring.append("MEM_DECOMMIT");
+		protectionbits &= (~MEM_DECOMMIT);
+	}
 
 	if(protectionbits){
 		if(protectionstring.length() > 0)
@@ -397,6 +417,45 @@ std::string UnpackingEngine::retProtectionString(ULONG protectionbits)
 		protectionstring.append("FIXMEEEEEE");
 	}
 	return protectionstring;
+}
+
+bool UnpackingEngine::FreetheseBlocks(PVOID baseAddress, ULONG numberOfBytes)
+{
+	ULONG freedCount= 0;
+
+	while(freedCount != numberOfBytes){
+		auto it = this->executableBlocks.findTracked((DWORD)baseAddress, 1);
+		if (it != this->executableBlocks.nullMarker()){
+			Logger::getInstance()->write(LOG_INFO, "It's a tracked executable block. StartAddress= 0x%08x, EndAddress= 0x%08x, Size= 0x%08x, protection= %d\n", it->startAddress, it->endAddress, it->size, it->neededProtection);
+			if ((DWORD)baseAddress == it->startAddress && numberOfBytes <= it->size){
+				// Free is within the current region.
+				it->startAddress += numberOfBytes;
+				it->size -= numberOfBytes;
+				
+				freedCount += numberOfBytes;
+			} else {
+			}
+		}
+
+		/*auto it = this->writeablePEBlocks.findTracked((DWORD)baseAddress, 1);
+		if (it != this->writeablePEBlocks.nullMarker()){
+			Logger::getInstance()->write(LOG_INFO, "It's a tracked executable block. StartAddress= 0x%08x, EndAddress= 0x%08x, Size= 0x%08x, protection= %d\n", it->startAddress, it->endAddress, it->size, it->neededProtection);
+			if ((DWORD)baseAddress == it->startAddress && numberOfBytes <= it->size){
+				// Free is within the current region.
+				it->startAddress += numberOfBytes;
+				it->size -= numberOfBytes;
+				
+				freedCount += numberOfBytes;
+			} else {
+			}
+		}*/
+
+		if (it == this->executableBlocks.nullMarker())
+			break;
+
+		//break;
+	}
+	return true;
 }
 
 
@@ -577,7 +636,12 @@ NTSTATUS WINAPI UnpackingEngine::onNtResumeThread(HANDLE thread, PULONG suspendC
 
 NTSTATUS WINAPI UnpackingEngine::onNtDelayExecution(BOOLEAN alertable, PLARGE_INTEGER time)
 {
-    Logger::getInstance()->write(LOG_INFO, "Sleep call detected (Low part: %d, High part: %d).", time->LowPart, time->HighPart);
+    Logger::getInstance()->write(LOG_INFO, "Sleep call detected (Low part: 0x08x, High part: 0x%08x).", time->LowPart, time->HighPart);
+
+	if (time->HighPart == 0x80000000 && time->LowPart == 0){
+		Logger::getInstance()->write(LOG_ERROR, "Infinite sleep. Fixing it.");
+		time->HighPart= 0;
+	}
 
     return this->origNtDelayExecution(alertable, time);
 }
@@ -587,6 +651,7 @@ NTSTATUS WINAPI UnpackingEngine::onNtFreeVirtualMemory(HANDLE process, PVOID* ba
 	Logger::getInstance()->write(LOG_INFO, "PRE-NtFreeVirtualMemory: TargetPID %d, Address 0x%08x, RegionSize 0x%08x, FreeType 0x%08x(%s)", GetProcessId(process), (DWORD)*baseAddress, (DWORD)*RegionSize, FreeType, retProtectionString(FreeType));
 	auto ret= this->origNtFreeVirtualMemory(process, baseAddress, RegionSize, FreeType);
 	Logger::getInstance()->write(LOG_INFO, "PST-NtFreeVirtualMemory: TargetPID %d, Address 0x%08x, RegionSize 0x%08x, FreeType 0x%08x(%s)", GetProcessId(process), (DWORD)*baseAddress, (DWORD)*RegionSize, FreeType, retProtectionString(FreeType));
+	FreetheseBlocks(*baseAddress, *RegionSize);
 	return ret;
 }
 
@@ -697,7 +762,7 @@ long UnpackingEngine::onShallowException(PEXCEPTION_POINTERS info)
         /* it's an executable block being tracked */
         /* set the block back to executable */
         ULONG _oldProtection;
-		Logger::getInstance()->write(LOG_ERROR, "Trying to remove execute hook on 0x%08x, 0x%08x, 0x%08x, 0x%08x, 0x%08x!", exceptionAddress, it->startAddress, it->size, (DWORD)it->neededProtection, _oldProtection);
+		Logger::getInstance()->write(LOG_INFO, "Trying to remove execute hook on 0x%08x, 0x%08x, 0x%08x, 0x%08x, 0x%08x!", exceptionAddress, it->startAddress, it->size, (DWORD)it->neededProtection, _oldProtection);
         auto ret = this->origNtProtectVirtualMemory(GetCurrentProcess(), (PVOID*)&it->startAddress, (PULONG)&it->size, (DWORD)it->neededProtection, &_oldProtection);
         if (ret != 0)
         {
@@ -707,7 +772,7 @@ long UnpackingEngine::onShallowException(PEXCEPTION_POINTERS info)
 
         /* dump the motherfucker and stop tracking it */
         this->blacklistedBlocks.startTracking(*it);
-        //this->dumpMemoryBlock(*it, exceptionAddress); Hideme
+        this->dumpMemoryBlock(*it, exceptionAddress); //Hideme
         this->executableBlocks.stopTracking(it);
 
 		this->dumpMemoryRegion(exceptionAddress);

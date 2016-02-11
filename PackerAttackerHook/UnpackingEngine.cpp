@@ -7,6 +7,7 @@
 #include <sstream>
 #include <assert.h>
 #include <algorithm>
+#include <ntstatus.h>
 
 UnpackingEngine* UnpackingEngine::instance = NULL;
 
@@ -219,7 +220,10 @@ void UnpackingEngine::dumpMemoryRegion(DWORD ep)
 
 	Logger::getInstance()->write(LOG_INFO, "StartAddress= 0x%08x, EndAddress= 0x%08x, Size= 0x%08x, removed= %d\n", it->startAddress, it->endAddress, it->size, it->removed);
 
-	sprintf(fileName, "C:\\dumps\\[%d]_%d_0x%08x_to_0x%08x_EP_0x%08x_IDX_%d.RDMP", this->processID, GetTickCount(), it->startAddress, it->endAddress, ep, ep - it->startAddress);
+	if ( *(const unsigned char*)it->startAddress == 'M' && *(((const unsigned char*)it->startAddress) + 1) == 'Z' )
+		sprintf(fileName, "C:\\dumps\\[%d]_%d_0x%08x_to_0x%08x_EP_0x%08x_IDX_%d.exe_", this->processID, GetTickCount(), it->startAddress, it->endAddress, ep, ep - it->startAddress);
+	else
+		sprintf(fileName, "C:\\dumps\\[%d]_%d_0x%08x_to_0x%08x_EP_0x%08x_IDX_%d.RDMP", this->processID, GetTickCount(), it->startAddress, it->endAddress, ep, ep - it->startAddress);
 
 	Logger::getInstance()->write(LOG_INFO, "Filename= %s\n", fileName);
 
@@ -228,11 +232,55 @@ void UnpackingEngine::dumpMemoryRegion(DWORD ep)
 
 void UnpackingEngine::dumpMemoryBlock(char* fileName, DWORD size, const unsigned char* data)
 {
+	Logger::getInstance()->write(LOG_INFO, "Filename(Multibyte)= %s\n", fileName);
+
     std::fstream file(fileName, std::ios::out | std::ios::binary);
     if (file.is_open())
     {
-        for (int i = 0; i < size; i++)
-            file.write((const char*)&data[i], 1);
+		if ( ((unsigned int)data & 0xFFF) == 0 ){
+			MEMORY_BASIC_INFORMATION mbi;
+			Logger::getInstance()->write(LOG_INFO, "Falling in PAGE boundary\n");
+			
+			while (size){
+				memset(&mbi, 0, sizeof(MEMORY_BASIC_INFORMATION));
+				auto val= VirtualQuery(data, &mbi, sizeof(MEMORY_BASIC_INFORMATION));
+				if (val != 0){
+
+					Logger::getInstance()->write(LOG_INFO, "mbi.BaseAddress= %x\n", mbi.BaseAddress);
+					Logger::getInstance()->write(LOG_INFO, "mbi.AllocationBase= %x\n", mbi.AllocationBase);
+					Logger::getInstance()->write(LOG_INFO, "mbi.AllocationProtect= %x\n", mbi.AllocationProtect);
+					Logger::getInstance()->write(LOG_INFO, "mbi.RegionSize= %x\n", mbi.RegionSize);
+					Logger::getInstance()->write(LOG_INFO, "mbi.State= %x\n", mbi.State);
+					Logger::getInstance()->write(LOG_INFO, "mbi.Protect= %x\n", mbi.Protect);
+					Logger::getInstance()->write(LOG_INFO, "mbi.Type= %x\n", mbi.Type);
+
+					if (mbi.State == MEM_COMMIT){
+						unsigned int correctRegionSize= mbi.RegionSize - ((unsigned char*)mbi.BaseAddress - data);
+						if (size <= correctRegionSize){
+							file.write((const char*)&data[0], size);
+							size= 0;
+							data+= size;
+						} else {
+							file.write((const char*)&data[0], correctRegionSize);
+							size-= correctRegionSize;
+							data+= correctRegionSize;
+						}
+					} else {
+						Logger::getInstance()->write(LOG_INFO, "Saw a PAGE with no MEM_COMMIT\n");
+						break;
+					}
+				} else {
+					Logger::getInstance()->write(LOG_INFO, "Failed in VirtualQuery= %x\n", val);
+					break;
+				}
+			}
+
+		} else {
+			Logger::getInstance()->write(LOG_INFO, "Not falling in PAGE boundary\n");
+			// Need to rewritten
+			for (int i = 0; i < size; i++)
+				file.write((const char*)&data[i], 1);
+		}
         file.close();
     }
     else
@@ -241,6 +289,8 @@ void UnpackingEngine::dumpMemoryBlock(char* fileName, DWORD size, const unsigned
 
 void UnpackingEngine::dumpMemoryBlockW(wchar_t* fileName, DWORD size, const unsigned char* data)
 {
+	Logger::getInstance()->write(LOG_INFO, "Unicode call\n");
+
     std::fstream file(fileName, std::ios::out | std::ios::binary);
     if (file.is_open())
     {
@@ -419,6 +469,8 @@ std::string UnpackingEngine::retProtectionString(ULONG protectionbits)
 	return protectionstring;
 }
 
+
+/* This function needs to rewritten to handle all types of blocks. */
 bool UnpackingEngine::FreetheseBlocks(PVOID baseAddress, ULONG numberOfBytes)
 {
 	ULONG freedCount= 0;
@@ -437,7 +489,9 @@ bool UnpackingEngine::FreetheseBlocks(PVOID baseAddress, ULONG numberOfBytes)
 			}
 		}
 
-		/*auto it = this->writeablePEBlocks.findTracked((DWORD)baseAddress, 1);
+		/* FIXME
+		
+		auto it = this->writeablePEBlocks.findTracked((DWORD)baseAddress, 1);
 		if (it != this->writeablePEBlocks.nullMarker()){
 			Logger::getInstance()->write(LOG_INFO, "It's a tracked executable block. StartAddress= 0x%08x, EndAddress= 0x%08x, Size= 0x%08x, protection= %d\n", it->startAddress, it->endAddress, it->size, it->neededProtection);
 			if ((DWORD)baseAddress == it->startAddress && numberOfBytes <= it->size){
@@ -466,10 +520,10 @@ NTSTATUS UnpackingEngine::onNtProtectVirtualMemory(HANDLE process, PVOID* baseAd
 
 	Logger::getInstance()->write(LOG_INFO, "NtProtectVirtualMemory(TargetPID %d, 0x%08x, 0x%08x, 0x%08x(%s))\n", GetProcessId(process), (DWORD)*baseAddress, (DWORD)*numberOfBytes, newProtection, retProtectionString(newProtection).c_str());
 
-    auto ret = this->origNtProtectVirtualMemory(process, baseAddress, numberOfBytes, newProtection, &_oldProtection);
+    NTSTATUS ret = this->origNtProtectVirtualMemory(process, baseAddress, numberOfBytes, newProtection, &_oldProtection);
 
-	if (this->isSelfProcess(process))
-		this->trackedregions.startTracking((DWORD)*baseAddress, (DWORD)*numberOfBytes);
+	if (ret == STATUS_SUCCESS && this->isSelfProcess(process))
+		this->trackedregions.startTrackingRegion((DWORD)*baseAddress, (DWORD)*numberOfBytes);
 
     if (OldProtection)
         *OldProtection = _oldProtection;
@@ -636,12 +690,16 @@ NTSTATUS WINAPI UnpackingEngine::onNtResumeThread(HANDLE thread, PULONG suspendC
 
 NTSTATUS WINAPI UnpackingEngine::onNtDelayExecution(BOOLEAN alertable, PLARGE_INTEGER time)
 {
-    Logger::getInstance()->write(LOG_INFO, "Sleep call detected (Low part: 0x08x, High part: 0x%08x).", time->LowPart, time->HighPart);
+    Logger::getInstance()->write(LOG_INFO, "Sleep call detected (Low part: 0x%08x, High part: 0x%08x).", time->LowPart, time->HighPart);
 
 	if (time->HighPart == 0x80000000 && time->LowPart == 0){
 		Logger::getInstance()->write(LOG_ERROR, "Infinite sleep. Fixing it.");
 		time->HighPart= 0;
 	}
+
+	time->HighPart= 0;
+	time->LowPart= 0; //0x3B9ACA00; 
+	Logger::getInstance()->write(LOG_INFO, "Fixed sleep (Low part: 0x%08x, High part: 0x%08x).", time->LowPart, time->HighPart);
 
     return this->origNtDelayExecution(alertable, time);
 }
@@ -651,12 +709,21 @@ NTSTATUS WINAPI UnpackingEngine::onNtFreeVirtualMemory(HANDLE process, PVOID* ba
 	Logger::getInstance()->write(LOG_INFO, "PRE-NtFreeVirtualMemory: TargetPID %d, Address 0x%08x, RegionSize 0x%08x, FreeType 0x%08x(%s)", GetProcessId(process), (DWORD)*baseAddress, (DWORD)*RegionSize, FreeType, retProtectionString(FreeType));
 	auto ret= this->origNtFreeVirtualMemory(process, baseAddress, RegionSize, FreeType);
 	Logger::getInstance()->write(LOG_INFO, "PST-NtFreeVirtualMemory: TargetPID %d, Address 0x%08x, RegionSize 0x%08x, FreeType 0x%08x(%s)", GetProcessId(process), (DWORD)*baseAddress, (DWORD)*RegionSize, FreeType, retProtectionString(FreeType));
-	FreetheseBlocks(*baseAddress, *RegionSize);
+	
+	if (ret == STATUS_SUCCESS && this->hooksReady && this->isSelfProcess(process)){
+		FreetheseBlocks(*baseAddress, *RegionSize);
+        this->trackedregions.stopTrackingRegion((DWORD)*baseAddress, (DWORD)*RegionSize);
+	}
 	return ret;
 }
 
 NTSTATUS WINAPI UnpackingEngine::onNtAllocateVirtualMemory(HANDLE ProcessHandle, PVOID *BaseAddress, ULONG ZeroBits, PULONG RegionSize, ULONG AllocationType, ULONG Protect)
 {
+    if (this->inAllocationHook)
+        return this->origNtAllocateVirtualMemory(ProcessHandle, BaseAddress, ZeroBits, RegionSize, AllocationType, Protect);
+
+    this->inAllocationHook = true;
+
 	Logger::getInstance()->write(LOG_INFO, "PRE-NtAllocateVirtualMemory(TargetPID %d, Address 0x%08x, Size 0x%08x, Protection 0x%08x(%s))\n", GetProcessId(ProcessHandle), (DWORD)*BaseAddress, (DWORD)*RegionSize, Protect, retProtectionString(Protect).c_str());
 
 	if (*BaseAddress == 0x00000000 && Protect == PAGE_EXECUTE_READWRITE){ // Debug
@@ -670,21 +737,19 @@ NTSTATUS WINAPI UnpackingEngine::onNtAllocateVirtualMemory(HANDLE ProcessHandle,
 		   }
 	}
 
-    if (this->inAllocationHook)
-        return this->origNtAllocateVirtualMemory(ProcessHandle, BaseAddress, ZeroBits, RegionSize, AllocationType, Protect);
+    if (this->hooksReady)
+		Logger::getInstance()->write(LOG_INFO, "PRE-NtAllocateVirtualMemory(TargetPID %d, Address 0x%08x, Size 0x%08x, Protection 0x%08x(%s))\n", GetProcessId(ProcessHandle), (DWORD)*BaseAddress, (DWORD)*RegionSize, Protect, retProtectionString(Protect).c_str());
 
-    this->inAllocationHook = true;
-        if (this->hooksReady)
-            Logger::getInstance()->write(LOG_INFO, "PRE-NtAllocateVirtualMemory(TargetPID %d, Address 0x%08x, Size 0x%08x, Protection 0x%08x(%s))\n", GetProcessId(ProcessHandle), (DWORD)*BaseAddress, (DWORD)*RegionSize, Protect, retProtectionString(Protect).c_str());
+    auto ret = this->origNtAllocateVirtualMemory(ProcessHandle, BaseAddress, ZeroBits, RegionSize, AllocationType, Protect);
 
-        auto ret = this->origNtAllocateVirtualMemory(ProcessHandle, BaseAddress, ZeroBits, RegionSize, AllocationType, Protect);
+    if (this->hooksReady)
+		Logger::getInstance()->write(LOG_INFO, "PST-NtAllocateVirtualMemory(TargetPID %d, Address 0x%08x, Count 0x%08x, Protection 0x%08x(%s)) RET: 0x%08x\n", GetProcessId(ProcessHandle), (DWORD)*BaseAddress, (RegionSize) ? *RegionSize : 0, Protect, retProtectionString(Protect).c_str(), ret);
 
-        if (this->hooksReady)
-            Logger::getInstance()->write(LOG_INFO, "PST-NtAllocateVirtualMemory(TargetPID %d, Address 0x%08x, Count 0x%08x, Protection 0x%08x(%s)) RET: 0x%08x\n", GetProcessId(ProcessHandle), (DWORD)*BaseAddress, (RegionSize) ? *RegionSize : 0, Protect, retProtectionString(Protect).c_str(), ret);
-
-
-        if (ret == 0 && this->hooksReady && this->isSelfProcess(ProcessHandle))
-            this->processMemoryBlockFromHook("onNtAllocateVirtualMemory", (DWORD)*BaseAddress, (DWORD)*RegionSize, Protect, NULL, false);
+    if (ret == STATUS_SUCCESS && this->hooksReady && this->isSelfProcess(ProcessHandle)){
+		this->processMemoryBlockFromHook("onNtAllocateVirtualMemory", (DWORD)*BaseAddress, (DWORD)*RegionSize, Protect, NULL, false);
+		this->trackedregions.startTrackingRegion((DWORD)*BaseAddress, (DWORD)*RegionSize);
+	}
+	
     this->inAllocationHook = false;
 
     return ret;

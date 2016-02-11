@@ -210,9 +210,49 @@ public:
         return this->trackedMemoryRegion.end();
     }
 
-    void startTracking(DWORD new_startaddress, DWORD new_size)
+	void stopTrackingRegion(DWORD r_startaddress, DWORD r_size)
+	{
+		Logger::getInstance()->write(LOG_INFO, "r_startaddress= 0x%08x, r_size= 0x%08x\n", r_startaddress, r_size);
+		printTrackingInfo();
+
+		//DWORD _relased_size= 0;
+
+		auto it = trackedMemoryRegion.begin();
+        for (; r_size !=0 && it != trackedMemoryRegion.end(); it++){
+			if (it->startAddress <= r_startaddress && r_startaddress <= it->endAddress){
+				
+				if (r_size !=0 && r_startaddress - it->startAddress > 0){
+					// We need to split this.
+					Logger::getInstance()->write(LOG_INFO, "Released block is starting from middle of another existing block StartAddress= 0x%08x, EndAddress= 0x%08x, Size= 0x%08x\n", it->startAddress, it->endAddress, it->size);
+					trackedMemoryRegion.push_back(_RegionInfo(it->startAddress, r_startaddress - it->startAddress));
+					it->startAddress= r_startaddress;
+					it->size= (r_startaddress - it->startAddress) + 1;
+				}
+
+				if (r_size !=0 && r_startaddress == it->startAddress && r_size < it->size) {
+					Logger::getInstance()->write(LOG_INFO, "Released block is ending in another existing block StartAddress= 0x%08x, EndAddress= 0x%08x, Size= 0x%08x\n", it->startAddress, it->endAddress, it->size);
+					trackedMemoryRegion.push_back(_RegionInfo(it->startAddress + r_size, it->size - r_size ));
+					r_size= 0;
+					it->removed= 1;
+					r_startaddress= it->endAddress + 1;
+				}
+
+				if (r_size !=0 && r_startaddress == it->startAddress && r_size >= it->size){
+					r_size-= it->size;
+					r_startaddress= it->endAddress + 1;
+					it->removed= 1;
+				}
+			}
+		}
+
+		trackedMemoryRegion.remove_if([](const _RegionInfo & o) { return o.removed; });
+		trackedMemoryRegion.sort([](const _RegionInfo & a, const _RegionInfo & b) { return a.startAddress < b.startAddress; }); // sort it based on the startaddress
+		printTrackingInfo();
+	}
+
+    void startTrackingRegion(DWORD new_startaddress, DWORD new_size)
     {
-		return;
+		//return;
 		Logger::getInstance()->write(LOG_INFO, "new_startaddress= 0x%08x, new_size= 0x%08x\nBefore tracking this.\n", new_startaddress, new_size);
 		printTrackingInfo();
 

@@ -11,6 +11,8 @@
 
 UnpackingEngine* UnpackingEngine::instance = NULL;
 
+bool _regionTracking= true;
+
 UnpackingEngine::UnpackingEngine(void)
 {
     this->hooks = new HookingEngine();
@@ -198,6 +200,14 @@ void UnpackingEngine::dumpRemoteMemoryBlocks()
             this->dumpMemoryBlock(fileName, IT->buffer.size(), (const unsigned char*)IT->buffer.data());
         }
     }
+}
+
+void UnpackingEngine::dumpMemoryBlock(TrackedMemoryBlockV2 block, DWORD ep)
+{
+    wchar_t fileName[MAX_PATH];
+    swprintf(fileName, L"C:\\dumps\\[%d]_%d_0x%08x_to_0x%08x_EP_0x%08x_IDX_%d.DMP", this->processID, GetTickCount(), block.startAddress, block.endAddress, ep, ep - block.startAddress);
+
+    this->dumpMemoryBlockW(fileName, block.size, (const unsigned char*)block.startAddress);
 }
 
 void UnpackingEngine::dumpMemoryBlock(TrackedMemoryBlock block, DWORD ep)
@@ -617,7 +627,11 @@ NTSTATUS WINAPI UnpackingEngine::onNtCreateThread(
                     /* dump the motherfucker and stop tracking it */
                     this->blacklistedBlocks.startTracking(*it);
                     this->dumpMemoryBlock(*it, ThreadContext->Eip);
-                    this->executableBlocks.stopTracking(it);
+					#ifdef NEW_TRACKER
+                    this->executableBlocks.stopTracking(*it);
+					#else
+					this->executableBlocks.stopTracking(it);
+					#endif
                 }
             }
         }
@@ -752,6 +766,8 @@ NTSTATUS WINAPI UnpackingEngine::onNtAllocateVirtualMemory(HANDLE ProcessHandle,
 	
     this->inAllocationHook = false;
 
+	Logger::getInstance()->write(LOG_INFO, "Finished NtAllocateVirtualMemory");
+
     return ret;
 }
 
@@ -790,7 +806,11 @@ long UnpackingEngine::onShallowException(PEXCEPTION_POINTERS info)
 
         /* start tracking execution in the section and stop tracking writes */
         this->executableBlocks.startTracking(*it);
-        this->writeablePEBlocks.stopTracking(it);
+		#ifdef NEW_TRACKER
+        this->writeablePEBlocks.stopTracking(*it);
+		#else
+		this->writeablePEBlocks.stopTracking(it);
+		#endif
 
         Logger::getInstance()->write(LOG_INFO, "STATUS_ACCESS_VIOLATION write on 0x%08x triggered write hook!", exceptionAddress);
 
@@ -827,7 +847,7 @@ long UnpackingEngine::onShallowException(PEXCEPTION_POINTERS info)
         /* it's an executable block being tracked */
         /* set the block back to executable */
         ULONG _oldProtection;
-		Logger::getInstance()->write(LOG_INFO, "Trying to remove execute hook on 0x%08x, 0x%08x, 0x%08x, 0x%08x, 0x%08x!", exceptionAddress, it->startAddress, it->size, (DWORD)it->neededProtection, _oldProtection);
+		Logger::getInstance()->write(LOG_INFO, "Trying to remove execute hook on 0x%08x, 0x%08x, 0x%08x, 0x%08x!", exceptionAddress, it->startAddress, it->size, (DWORD)it->neededProtection);
         auto ret = this->origNtProtectVirtualMemory(GetCurrentProcess(), (PVOID*)&it->startAddress, (PULONG)&it->size, (DWORD)it->neededProtection, &_oldProtection);
         if (ret != 0)
         {
@@ -838,7 +858,11 @@ long UnpackingEngine::onShallowException(PEXCEPTION_POINTERS info)
         /* dump the motherfucker and stop tracking it */
         this->blacklistedBlocks.startTracking(*it);
         this->dumpMemoryBlock(*it, exceptionAddress); //Hideme
-        this->executableBlocks.stopTracking(it);
+		#ifdef NEW_TRACKER
+			this->executableBlocks.stopTracking(*it);
+		#else
+			this->executableBlocks.stopTracking(it);
+		#endif
 
 		this->dumpMemoryRegion(exceptionAddress);
 
@@ -927,6 +951,15 @@ long UnpackingEngine::onDeepException(PEXCEPTION_POINTERS info)
     Logger::getInstance()->write(LOG_APPENDLINE, "\tESP: 0x%08x", info->ContextRecord->Esp);
     Logger::getInstance()->write(LOG_APPENDLINE, "\tEIP: 0x%08x", info->ContextRecord->Eip);
     Logger::getInstance()->write(LOG_APPENDLINE, "\tEFLAGS: 0x%08x", info->ContextRecord->EFlags);
+
+	/*__asm
+	{
+		start:
+			nop
+			nop
+			nop 
+			jmp start
+	}*/
 
     DebugStackTracer stackTracer(
         [=](std::string line) -> void

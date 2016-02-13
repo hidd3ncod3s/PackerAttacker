@@ -37,6 +37,7 @@
 #define HOOK_GET_ORIG(object, library, name) object->orig ## name = (_orig ## name)GetProcAddress(LoadLibraryA(library), #name); assert(object->orig ## name);
 #define HOOK_SET(object, hooks, name) hooks->placeHook(&(PVOID&)object->orig ## name, &_on ## name);
 
+//#define NEW_TRACKER
 
 class UnpackingEngine
 {
@@ -62,9 +63,19 @@ private:
     SyncLock* lock;
 
     std::vector<std::pair<DWORD, DWORD>> PESections;
-    MemoryBlockTracker<TrackedMemoryBlock> writeablePEBlocks;
+    
+	MemoryBlockTracker<TrackedMemoryBlock> blocksInProcess;
+
+#ifdef NEW_TRACKER
+	MemoryBlockTrackerV2<TrackedMemoryBlockV2> writeablePEBlocks;
+    MemoryBlockTrackerV2<TrackedMemoryBlockV2> executableBlocks;
+    MemoryBlockTrackerV2<TrackedMemoryBlockV2> blacklistedBlocks;
+#else
+	MemoryBlockTracker<TrackedMemoryBlock> writeablePEBlocks;
     MemoryBlockTracker<TrackedMemoryBlock> executableBlocks;
     MemoryBlockTracker<TrackedMemoryBlock> blacklistedBlocks;
+#endif
+
     std::map<DWORD, MemoryBlockTracker<TrackedCopiedMemoryBlock>> remoteMemoryBlocks;
     std::map<DWORD, DWORD> suspendedThreads;
 	MemoryRegionTracker trackedregions;
@@ -75,6 +86,7 @@ private:
     bool isPEMemory(DWORD address);
     void startTrackingRemoteMemoryBlock(DWORD pid, DWORD baseAddress, DWORD size, unsigned char* data);
     void dumpRemoteMemoryBlocks();
+	void UnpackingEngine::dumpMemoryBlock(TrackedMemoryBlockV2 block, DWORD ep);
     void dumpMemoryBlock(TrackedMemoryBlock block, DWORD ep);
 	void dumpMemoryRegion(DWORD data);
     void dumpMemoryBlock(char* fileName, DWORD size, const unsigned char* data);

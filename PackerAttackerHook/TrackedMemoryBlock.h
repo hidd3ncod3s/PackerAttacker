@@ -5,6 +5,8 @@
 #include <algorithm>
 #include "Logger.h"
 
+extern bool _regionTracking;
+
 struct TrackedMemoryBlock
 {
     DWORD startAddress, endAddress, size;
@@ -50,7 +52,6 @@ struct TrackedMemoryBlock
     }
 };
 
-
 struct TrackedCopiedMemoryBlock : public TrackedMemoryBlock
 {
     std::vector<unsigned char> buffer;
@@ -67,7 +68,7 @@ struct TrackedCopiedMemoryBlock : public TrackedMemoryBlock
         DWORD protectionTemp = right.neededProtection;
         if (this->overlapsWith(right, true))
         {
-            /* we need to copy on top of existing bytes */
+            // we need to copy on top of existing bytes */
             unsigned int startIndex = right.startAddress - this->startAddress;
             unsigned int oI = startIndex; //overwrite index
             unsigned int cI = 0; //copy index
@@ -166,6 +167,231 @@ struct MemoryBlockTracker
 };
 
 
+/* New Block tracker. This should match with the system block/region. */
+
+struct TrackedMemoryBlockV2
+{
+    DWORD startAddress, endAddress, size;
+	bool tainted, removed;
+	DWORD neededProtection; // protection bits are saved here.
+
+
+    TrackedMemoryBlockV2(DWORD _startAddress, DWORD _size, DWORD _protection=0)
+    {
+        this->startAddress = _startAddress;
+        this->endAddress = _startAddress + _size - 1;
+        this->size = _size;
+		this->tainted= false;
+		this->removed= false;
+		this->neededProtection= _protection;
+    }
+};
+
+template<typename TrackType>
+struct MemoryBlockTrackerV2
+{
+public:
+    typename std::list<TrackType>::iterator nullMarker()
+    {
+		return this->trackedMemoryBlocks.end();
+    }
+    typename std::list<TrackType>::iterator findTracked(DWORD address, DWORD size)
+    {
+		return findTracked(TrackType(address, size));
+    }
+	void startTracking(DWORD address, DWORD size, DWORD protection)
+    {
+		return startTracking(TrackType(address, size, protection));
+    }
+	void stopTracking(DWORD address, DWORD size)
+    {
+		return stopTracking(TrackType(address, size));
+    }
+	bool isTracked(DWORD address, DWORD size)
+    {
+		return isTracked(TrackType(address, size));
+    }
+
+
+	// Original functions.
+    typename std::list<TrackType>::iterator findTracked(TrackType newBlock)
+    {
+		//filler
+		auto it = trackedMemoryBlocks.begin();
+        for (; it != trackedMemoryBlocks.end(); it++){
+			if (it->startAddress <= newBlock.startAddress && newBlock.startAddress <= it->endAddress){
+				return it;
+			}
+		}
+		return this->trackedMemoryBlocks.end();
+    }
+    
+    bool isTracked(TrackType check)
+    {
+		return findTracked(check) != this->nullMarker();
+    }
+    
+    void startTracking(TrackType newBlock)
+    {
+		Logger::getInstance()->write(LOG_INFO, "Before start tracking this: newBlock.startaddress= 0x%08x, newBlock.size= 0x%08x\n", newBlock.startAddress, newBlock.size);
+		printTrackingInfo();
+
+		auto it = trackedMemoryBlocks.begin();
+        for (; it != trackedMemoryBlocks.end(); it++){
+
+			if (it->startAddress <= newBlock.startAddress && newBlock.startAddress <= it->endAddress){
+				// falling within current block
+
+				if(it->startAddress < newBlock.startAddress){
+					// Starting from middle of the existing block.
+					trackedMemoryBlocks.push_back(TrackType(it->startAddress, (newBlock.startAddress - (it->startAddress)) + 1, it->neededProtection ));
+					it->size-= (newBlock.startAddress - it->startAddress);
+					it->startAddress= newBlock.startAddress;
+				}
+
+				if (it->startAddress == newBlock.startAddress){
+					// Starting from beginning of the existing block.
+
+					if (newBlock.endAddress == it->endAddress){
+						// TODO: Exact same size. Just update other information.
+						it->neededProtection= newBlock.neededProtection;
+					} else {
+						if (newBlock.endAddress < it->endAddress){
+							// Ending before the end of current existing block.
+
+							trackedMemoryBlocks.push_back(TrackType(newBlock.endAddress+1, (it->endAddress - (newBlock.endAddress+1)) + 1, it->neededProtection ));
+							it->endAddress= newBlock.endAddress;
+							it->size= newBlock.size;
+							// TODO: Just update other information.
+							it->neededProtection= newBlock.neededProtection;
+							break;
+						} else {
+							if (newBlock.endAddress > it->endAddress){
+								// cross over to next block.
+								it->endAddress= newBlock.endAddress;
+								it->size= newBlock.size;
+								// TODO: Just update other information.
+								it->neededProtection= newBlock.neededProtection;
+
+								auto nx = std::next(it, 1);
+								while (nx != trackedMemoryBlocks.end() && it->startAddress <= nx->startAddress && nx->startAddress <= it->endAddress){
+									// Next block is within new block.
+									nx->removed= true;
+
+									if (nx->endAddress <= it->endAddress){
+										// Complete overlap.
+										nx = std::next(nx, 1);
+										continue;
+									} else {
+										if (nx->endAddress > it->endAddress){
+											// Next block covers more area.
+											trackedMemoryBlocks.push_back(TrackType(it->endAddress+1, (nx->endAddress - (it->endAddress+1)) + 1, nx->neededProtection ));
+											// TODO: Just update other information.
+											nx = std::next(nx, 1);
+										}
+									}
+
+								}
+							}
+						}
+					}
+				}
+				trackedMemoryBlocks.sort([](const TrackType & a, const TrackType & b) { return a.startAddress < b.startAddress; }); // sort it based on the startaddress
+				break;
+			}
+		}
+
+		// New block
+		if (it == trackedMemoryBlocks.end()){
+			Logger::getInstance()->write(LOG_INFO, "Its a New block.\n");
+			trackedMemoryBlocks.push_back(TrackType(newBlock.startAddress,newBlock.size, newBlock.neededProtection));
+			// do the sorting now.
+			trackedMemoryBlocks.sort([](const TrackType & a, const TrackType & b) { return a.startAddress < b.startAddress; }); // sort it based on the startaddress
+
+			Logger::getInstance()->write(LOG_INFO, "After adding new block\n");
+			printTrackingInfo();
+		}
+		
+    }
+	
+    void stopTracking(TrackType newBlock)
+    {
+		Logger::getInstance()->write(LOG_INFO, "Before start tracking this: newBlock.startaddress= 0x%08x, newBlock.size= 0x%08x\n", newBlock.startAddress, newBlock.size);
+		printTrackingInfo();
+
+		auto it = trackedMemoryBlocks.begin();
+        for (; it != trackedMemoryBlocks.end(); it++){
+
+			if (it->startAddress <= newBlock.startAddress && newBlock.startAddress <= it->endAddress){
+				// falling within current block
+
+				if(it->startAddress < newBlock.startAddress){
+					// Starting from middle of the existing block.
+					trackedMemoryBlocks.push_back(TrackType(it->startAddress, (newBlock.startAddress - (it->startAddress)) + 1, it->neededProtection ));
+					it->size-= (newBlock.startAddress - it->startAddress);
+					it->startAddress= newBlock.startAddress;
+				}
+
+				if (it->startAddress == newBlock.startAddress){
+					// Starting from beginning of the existing block.
+
+					if (newBlock.endAddress == it->endAddress){
+						// TODO: Exact same size. Just update other information.
+					} else {
+						if (newBlock.endAddress < it->endAddress){
+							// Ending before the end of current existing block.
+
+							trackedMemoryBlocks.push_back(TrackType(newBlock.endAddress+1, (it->endAddress - (newBlock.endAddress+1)) + 1, it->neededProtection ));
+							break;
+						} else {
+							if (newBlock.endAddress > it->endAddress){
+								// cross over to next block.
+								it->endAddress= newBlock.endAddress;
+								it->size= newBlock.size;
+
+								auto nx = std::next(it, 1);
+								while (nx != trackedMemoryBlocks.end() && it->startAddress <= nx->startAddress && nx->startAddress <= it->endAddress){
+									// Next block is within new block.
+									nx->removed= true;
+
+									if (nx->endAddress <= it->endAddress){
+										// Complete overlap.
+										nx = std::next(nx, 1);
+										continue;
+									} else {
+										if (nx->endAddress > it->endAddress){
+											// Next block covers more area.
+											trackedMemoryBlocks.push_back(TrackType(it->endAddress+1, (nx->endAddress - (it->endAddress+1)) + 1, nx->neededProtection ));
+											// TODO: Just update other information.
+											nx = std::next(nx, 1);
+										}
+									}
+
+								}
+							}
+						}
+					}
+				}
+
+				it->removed= true;
+				trackedMemoryBlocks.sort([](const TrackType & a, const TrackType & b) { return a.startAddress < b.startAddress; }); // sort it based on the startaddress
+				break;
+			}
+		}
+    }
+
+    std::list<TrackType> trackedMemoryBlocks;
+
+	void printTrackingInfo()
+	{
+		auto it = trackedMemoryBlocks.begin();
+        for (; it != trackedMemoryBlocks.end(); it++){
+			Logger::getInstance()->write(LOG_INFO, "StartAddress= 0x%08x, EndAddress= 0x%08x, Size= 0x%08x, removed= %d\n", it->startAddress, it->endAddress, it->size, it->removed);
+		}
+	}
+};
+
+
 class MemoryRegionTracker
 {
 	struct _RegionInfo{
@@ -212,6 +438,8 @@ public:
 
 	void stopTrackingRegion(DWORD r_startaddress, DWORD r_size)
 	{
+		if(!_regionTracking)
+			return;
 		Logger::getInstance()->write(LOG_INFO, "r_startaddress= 0x%08x, r_size= 0x%08x\n", r_startaddress, r_size);
 		printTrackingInfo();
 
@@ -252,7 +480,8 @@ public:
 
     void startTrackingRegion(DWORD new_startaddress, DWORD new_size)
     {
-		//return;
+		if(!_regionTracking)
+			return;
 		Logger::getInstance()->write(LOG_INFO, "new_startaddress= 0x%08x, new_size= 0x%08x\nBefore tracking this.\n", new_startaddress, new_size);
 		printTrackingInfo();
 
@@ -261,9 +490,10 @@ public:
         for (; it != trackedMemoryRegion.end(); it++){
 			if (it->startAddress <= new_startaddress && new_startaddress <= it->endAddress){
 				auto new_endaddress= new_startaddress + (new_size - 1);
-				Logger::getInstance()->write(LOG_INFO, "Overlapping region. StartAddress= 0x%08x, EndAddress= 0x%08x, Size= 0x%08x\n", it->startAddress, it->endAddress, it->size);
+				
 				if (new_endaddress > it->endAddress){
 					// Go past the current region.
+					Logger::getInstance()->write(LOG_INFO, "Overlapping region. StartAddress= 0x%08x, EndAddress= 0x%08x, Size= 0x%08x\n", it->startAddress, it->endAddress, it->size);
 
 					//Fixed this region
 					it->size += (new_endaddress - it->endAddress);
@@ -327,13 +557,6 @@ public:
 		Logger::getInstance()->write(LOG_INFO, "\nFinished tracking this region\n");
 
     }
-
-
-
-	/*void stopTracking(DWORD address, DWORD size)
-    {
-        this->stopTracking(this->findTracked(address, size));
-    }*/
 
 private:
 	std::list<_RegionInfo> trackedMemoryRegion;

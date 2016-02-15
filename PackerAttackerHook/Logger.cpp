@@ -31,7 +31,7 @@ void Logger::write(const char* prefixFormat, const char* function, int lineNumbe
     assert(this->logFile);
     //assert(this->logFile->open());
 
-	auto sg = this->lock->enterWithScopeGuard();
+	//auto sg = this->lock->enterWithScopeGuard();
 
     this->writePrefix(prefixFormat, function, lineNumber);
     this->logFile->write(line.c_str(), line.length());
@@ -59,11 +59,11 @@ void Logger::writePrefix(const char* prefixFormat, const char* function, int lin
 {
     time_t now = time(0);
     struct tm  tstruct;
-    char timebuffer[128], buffer[128];
+    char timebuffer[128], buffer[512];
     
     tstruct = *localtime(&now);
     strftime(timebuffer, sizeof(timebuffer), "[%Y-%m-%d.%X]", &tstruct);
 
-	sprintf(buffer, prefixFormat, timebuffer, function, lineNumber);
+	sprintf(buffer, prefixFormat, timebuffer, ::GetCurrentProcessId(), ::GetCurrentThreadId(), function, lineNumber);
 	this->logFile->write(buffer, strlen(buffer));
 }

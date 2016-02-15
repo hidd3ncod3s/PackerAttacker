@@ -7,6 +7,8 @@
 #include <Windows.h>
 #include <map>
 
+//->lock->enterWithScopeGuard(); \
+//Logger::getInstance()->write(LOG_INFO, "Ignoring the hook: %s", "## name"); \
 
 /* used to define a hook */
 #define _HOOK_DEFINE_INTERNAL(reT, reTm, name, args, argnames) \
@@ -15,11 +17,16 @@
     __declspec(dllexport) reT reTm on ## name args; /* declare the member-fucntion that will be called internal to the class */ \
     __declspec(dllexport) static reT reTm _on ## name args /* declare the static function that acts as a hook callback and forwards the call into the member function */ \
     { \
-        auto sg = getInstance()->lock->enterWithScopeGuard(); \
-        if (getInstance()->shouldIgnoreHooks()) \
+        SyncLockScopeGuard sg(getInstance()->lock); \
+        if (getInstance()->shouldIgnoreHooks() || getInstance()->isNestedHook()){ \
             return getInstance()->orig ## name argnames; \
-        else \
-            return getInstance()->on ## name argnames; \
+		} \
+        else{ \
+			getInstance()->setNestedbit(true);\
+            auto ret= getInstance()->on ## name argnames; \
+			getInstance()->setNestedbit(false);\
+			return ret; \
+		}\
     }
 
 /* these are just "variadic" wrappers for the _HOOK_DEFINE_INTERNAL macro */
@@ -37,7 +44,7 @@
 #define HOOK_GET_ORIG(object, library, name) object->orig ## name = (_orig ## name)GetProcAddress(LoadLibraryA(library), #name); assert(object->orig ## name);
 #define HOOK_SET(object, hooks, name) hooks->placeHook(&(PVOID&)object->orig ## name, &_on ## name);
 
-//#define NEW_TRACKER
+#define NEW_TRACKER 1
 
 class UnpackingEngine
 {
@@ -58,18 +65,18 @@ public:
 private:
     static UnpackingEngine* instance;
     bool hooksReady, inAllocationHook, simulateDisabledDEP, bypassHooks;
+	bool nestedHook;
     DWORD processID;
     HookingEngine* hooks;
     SyncLock* lock;
 
     std::vector<std::pair<DWORD, DWORD>> PESections;
     
-	MemoryBlockTracker<TrackedMemoryBlock> blocksInProcess;
-
 #ifdef NEW_TRACKER
-	MemoryBlockTrackerV2<TrackedMemoryBlockV2> writeablePEBlocks;
+	MemoryBlockTrackerV2<TrackedMemoryBlockV2> blocksInProcess;
+	/*MemoryBlockTrackerV2<TrackedMemoryBlockV2> writeablePEBlocks;
     MemoryBlockTrackerV2<TrackedMemoryBlockV2> executableBlocks;
-    MemoryBlockTrackerV2<TrackedMemoryBlockV2> blacklistedBlocks;
+    MemoryBlockTrackerV2<TrackedMemoryBlockV2> blacklistedBlocks;*/
 #else
 	MemoryBlockTracker<TrackedMemoryBlock> writeablePEBlocks;
     MemoryBlockTracker<TrackedMemoryBlock> executableBlocks;
@@ -80,6 +87,8 @@ private:
     std::map<DWORD, DWORD> suspendedThreads;
 	MemoryRegionTracker trackedregions;
 
+	void setNestedbit(bool nested) {nestedHook= nested;}
+	bool isNestedHook() {return nestedHook;}
     void ignoreHooks(bool should) { this->bypassHooks = should; }
     bool shouldIgnoreHooks() { return this->bypassHooks; }
     void startTrackingPEMemoryBlocks();
@@ -128,7 +137,13 @@ private:
     long onShallowException(PEXCEPTION_POINTERS info);
     static long __stdcall _onShallowException(PEXCEPTION_POINTERS info)
     {
-        return UnpackingEngine::getInstance()->onShallowException(info);
+		//SyncLockScopeGuard sg(UnpackingEngine::getInstance()->lock);
+
+		//UnpackingEngine::getInstance()->setNestedbit(true);
+        //auto ret= UnpackingEngine::getInstance()->onShallowException(info);
+		//return UnpackingEngine::getInstance()->setNestedbit(false);
+		//return ret;
+		return UnpackingEngine::getInstance()->onShallowException(info);
     }
 
     /* exception handler for detecting crashes */

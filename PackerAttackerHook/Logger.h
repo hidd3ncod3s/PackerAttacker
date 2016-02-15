@@ -4,9 +4,9 @@
 #include <string>
 
 #define _LOG_BASE_ __FUNCTION__, __LINE__
-#define LOG_ERROR "%s ERROR %s (%d) ", _LOG_BASE_
-#define LOG_INFO  "%s INFO  %s (%d) ", _LOG_BASE_
-#define LOG_WARN  "%s WARN  %s (%d) ", _LOG_BASE_
+#define LOG_ERROR "%s %d:%d ERROR %s (%d) ", _LOG_BASE_
+#define LOG_INFO  "%s %d:%d INFO  %s (%d) ", _LOG_BASE_
+#define LOG_WARN  "%s %d:%d WARN  %s (%d) ", _LOG_BASE_
 #define LOG_APPENDLINE "                            ", _LOG_BASE_
 
 class SyncLock;

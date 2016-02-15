@@ -191,30 +191,30 @@ template<typename TrackType>
 struct MemoryBlockTrackerV2
 {
 public:
-    typename std::list<TrackType>::iterator nullMarker()
+    typename std::list<TrackType>::iterator nullMarkerBlock()
     {
 		return this->trackedMemoryBlocks.end();
     }
-    typename std::list<TrackType>::iterator findTracked(DWORD address, DWORD size)
+    typename std::list<TrackType>::iterator findTrackedBlock(DWORD address, DWORD size)
     {
-		return findTracked(TrackType(address, size));
+		return findTrackedBlock(TrackType(address, size));
     }
-	void startTracking(DWORD address, DWORD size, DWORD protection)
+	void startTrackingBlock(DWORD address, DWORD size, DWORD protection)
     {
-		return startTracking(TrackType(address, size, protection));
+		return startTrackingBlock(TrackType(address, size, protection));
     }
-	void stopTracking(DWORD address, DWORD size)
+	void stopTrackingBlock(DWORD address, DWORD size)
     {
-		return stopTracking(TrackType(address, size));
+		return stopTrackingBlock(TrackType(address, size));
     }
-	bool isTracked(DWORD address, DWORD size)
+	bool isTrackedBlock(DWORD address, DWORD size)
     {
-		return isTracked(TrackType(address, size));
+		return isTrackedBlock(TrackType(address, size));
     }
 
 
 	// Original functions.
-    typename std::list<TrackType>::iterator findTracked(TrackType newBlock)
+    typename std::list<TrackType>::iterator findTrackedBlock(TrackType newBlock)
     {
 		//filler
 		auto it = trackedMemoryBlocks.begin();
@@ -226,15 +226,15 @@ public:
 		return this->trackedMemoryBlocks.end();
     }
     
-    bool isTracked(TrackType check)
+    bool isTrackedBlock(TrackType check)
     {
 		return findTracked(check) != this->nullMarker();
     }
     
-    void startTracking(TrackType newBlock)
+    void startTrackingBlock(TrackType newBlock)
     {
-		Logger::getInstance()->write(LOG_INFO, "Before start tracking this: newBlock.startaddress= 0x%08x, newBlock.size= 0x%08x\n", newBlock.startAddress, newBlock.size);
-		printTrackingInfo();
+		Logger::getInstance()->write(LOG_INFO, "Before startTracking: newBlock.startaddress= 0x%08x, newBlock.size= 0x%08x\n", newBlock.startAddress, newBlock.size);
+		printBlockTrackingInfo();
 
 		auto it = trackedMemoryBlocks.begin();
         for (; it != trackedMemoryBlocks.end(); it++){
@@ -309,15 +309,16 @@ public:
 			trackedMemoryBlocks.sort([](const TrackType & a, const TrackType & b) { return a.startAddress < b.startAddress; }); // sort it based on the startaddress
 
 			Logger::getInstance()->write(LOG_INFO, "After adding new block\n");
-			printTrackingInfo();
+			printBlockTrackingInfo();
 		}
 		
+		Logger::getInstance()->write(LOG_INFO, "After startTracking\n");
     }
 	
-    void stopTracking(TrackType newBlock)
+    void stopTrackingBlock(TrackType newBlock)
     {
 		Logger::getInstance()->write(LOG_INFO, "Before start tracking this: newBlock.startaddress= 0x%08x, newBlock.size= 0x%08x\n", newBlock.startAddress, newBlock.size);
-		printTrackingInfo();
+		printBlockTrackingInfo();
 
 		auto it = trackedMemoryBlocks.begin();
         for (; it != trackedMemoryBlocks.end(); it++){
@@ -382,12 +383,18 @@ public:
 
     std::list<TrackType> trackedMemoryBlocks;
 
-	void printTrackingInfo()
+	void printBlockTrackingInfo()
 	{
+		//return;
 		auto it = trackedMemoryBlocks.begin();
         for (; it != trackedMemoryBlocks.end(); it++){
 			Logger::getInstance()->write(LOG_INFO, "StartAddress= 0x%08x, EndAddress= 0x%08x, Size= 0x%08x, removed= %d\n", it->startAddress, it->endAddress, it->size, it->removed);
 		}
+	}
+
+	void removeRemovedBlocks()
+	{
+		trackedMemoryBlocks.remove_if([](const TrackedMemoryBlockV2 & o) { return o.removed; });
 	}
 };
 
@@ -406,8 +413,9 @@ class MemoryRegionTracker
 		}
 	};
 
-	void printTrackingInfo()
+	void printRegionTrackingInfo()
 	{
+		return;
 		auto it = trackedMemoryRegion.begin();
         for (; it != trackedMemoryRegion.end(); it++){
 			Logger::getInstance()->write(LOG_INFO, "StartAddress= 0x%08x, EndAddress= 0x%08x, Size= 0x%08x, removed= %d\n", it->startAddress, it->endAddress, it->size, it->removed);
@@ -416,7 +424,7 @@ class MemoryRegionTracker
 
 public:
 
-	std::list<_RegionInfo>::iterator nullMarker()
+	std::list<_RegionInfo>::iterator nullMarkerRegion()
     {
         return this->trackedMemoryRegion.end();
     }
@@ -441,7 +449,7 @@ public:
 		if(!_regionTracking)
 			return;
 		Logger::getInstance()->write(LOG_INFO, "r_startaddress= 0x%08x, r_size= 0x%08x\n", r_startaddress, r_size);
-		printTrackingInfo();
+		printRegionTrackingInfo();
 
 		//DWORD _relased_size= 0;
 
@@ -475,7 +483,7 @@ public:
 
 		trackedMemoryRegion.remove_if([](const _RegionInfo & o) { return o.removed; });
 		trackedMemoryRegion.sort([](const _RegionInfo & a, const _RegionInfo & b) { return a.startAddress < b.startAddress; }); // sort it based on the startaddress
-		printTrackingInfo();
+		printRegionTrackingInfo();
 	}
 
     void startTrackingRegion(DWORD new_startaddress, DWORD new_size)
@@ -483,7 +491,7 @@ public:
 		if(!_regionTracking)
 			return;
 		Logger::getInstance()->write(LOG_INFO, "new_startaddress= 0x%08x, new_size= 0x%08x\nBefore tracking this.\n", new_startaddress, new_size);
-		printTrackingInfo();
+		printRegionTrackingInfo();
 
 		// Merge overlapping regions.
 		auto it = trackedMemoryRegion.begin();
@@ -515,7 +523,7 @@ public:
 				}
 
 				Logger::getInstance()->write(LOG_INFO, "After fixing overlapping regions\n");
-				printTrackingInfo();
+				printRegionTrackingInfo();
 
 				break;
 			}
@@ -529,7 +537,7 @@ public:
 			trackedMemoryRegion.sort([](const _RegionInfo & a, const _RegionInfo & b) { return a.startAddress < b.startAddress; }); // sort it based on the startaddress
 
 			Logger::getInstance()->write(LOG_INFO, "After adding new region\n");
-			printTrackingInfo();
+			printRegionTrackingInfo();
 		}
 
 		// Contigous region. At a time we will have only one contigous region.
@@ -549,7 +557,7 @@ public:
 			if(didamerge){
 				trackedMemoryRegion.remove_if([](const _RegionInfo & o) { return o.removed; });
 				Logger::getInstance()->write(LOG_INFO, "After merging contigous regions\n");
-				printTrackingInfo();
+				printRegionTrackingInfo();
 				break;
 			}
 		}

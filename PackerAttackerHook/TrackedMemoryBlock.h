@@ -388,7 +388,7 @@ public:
 		//return;
 		auto it = trackedMemoryBlocks.begin();
         for (; it != trackedMemoryBlocks.end(); it++){
-			Logger::getInstance()->write(LOG_INFO, "StartAddress= 0x%08x, EndAddress= 0x%08x, Size= 0x%08x, removed= %d\n", it->startAddress, it->endAddress, it->size, it->removed);
+			Logger::getInstance()->write(LOG_INFO, "StartAddress= 0x%08x, EndAddress= 0x%08x, Size= 0x%08x, Protection=  0x%08x, removed= %d\n", it->startAddress, it->endAddress, it->size, it->neededProtection, it->removed);
 		}
 	}
 

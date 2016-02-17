@@ -434,13 +434,13 @@ ULONG UnpackingEngine::processMemoryBlockFromHook(const char* source, DWORD addr
 
 	if(IS_WRITEABLE_PROT(newProtection) && IS_EXECUTABLE_PROT(newProtection)){
 		this->origNtProtectVirtualMemory(GetCurrentProcess(), &_address, &_size, REMOVE_EXECUTABLE_PROT(REMOVE_WRITEABLE_PROT(newProtection)), &_oldProtection);
-		Logger::getInstance()->write(LOG_INFO, "[%s] Placed write/exeucte hook on block at 0x%08x - 0x%08x", source, address, address + size);
+		Logger::getInstance()->write(LOG_INFO, "[%s] Placed write/exeucte hook on block at 0x%08x - 0x%08x, Protection= 0x%08x", source, address, address + size, REMOVE_EXECUTABLE_PROT(REMOVE_WRITEABLE_PROT(newProtection)));
 	} else if (IS_WRITEABLE_PROT(newProtection)) {
 		this->origNtProtectVirtualMemory(GetCurrentProcess(), &_address, &_size, REMOVE_WRITEABLE_PROT(newProtection), &_oldProtection);
-		Logger::getInstance()->write(LOG_INFO, "[%s] Placed write hook on block at 0x%08x - 0x%08x", source, address, address + size);
+		Logger::getInstance()->write(LOG_INFO, "[%s] Placed write hook on block at 0x%08x - 0x%08x, Protection= 0x%08x", source, address, address + size, REMOVE_WRITEABLE_PROT(newProtection));
 	} else if (IS_EXECUTABLE_PROT(newProtection)){
 		this->origNtProtectVirtualMemory(GetCurrentProcess(), &_address, &_size, REMOVE_EXECUTABLE_PROT(newProtection), &_oldProtection);
-		Logger::getInstance()->write(LOG_INFO, "[%s] Placed execution hook on 0x%08x - 0x%08x", source, address, address + size);
+		Logger::getInstance()->write(LOG_INFO, "[%s] Placed execution hook on 0x%08x - 0x%08x, Protection= 0x%08x", source, address, address + size, REMOVE_EXECUTABLE_PROT(newProtection));
 	} else {
 		Logger::getInstance()->write(LOG_INFO, "[%s] No need to hook block 0x%08x - 0x%08x", source, address, address + size);
     }
@@ -634,64 +634,6 @@ bool UnpackingEngine::FreetheseBlocks(PVOID baseAddress, ULONG numberOfBytes)
 {
 
 	this->blocksInProcess.stopTrackingBlock((DWORD) baseAddress, numberOfBytes);
-	return true;
-
-	ULONG freedCount= 0;
-
-	while(freedCount != numberOfBytes){
-		#ifdef NEW_TRACKER
-		auto it = this->blocksInProcess.findTrackedBlock((DWORD)baseAddress, 1);
-		if (it != this->blocksInProcess.nullMarkerBlock()){
-		#else
-		auto it = this->executableBlocks.findTracked((DWORD)baseAddress, 1);
-		if (it != this->executableBlocks.nullMarker()){
-		#endif
-			Logger::getInstance()->write(LOG_INFO, "It's a tracked block. StartAddress= 0x%08x, EndAddress= 0x%08x, Size= 0x%08x, protection= %d\n", it->startAddress, it->endAddress, it->size, it->neededProtection);
-			if ((DWORD)baseAddress == it->startAddress && numberOfBytes <= it->size){
-				// Free is within the current region.
-				it->startAddress += numberOfBytes;
-				it->size -= numberOfBytes;
-				
-				freedCount += numberOfBytes;
-			} else {
-				if ((DWORD)baseAddress == it->startAddress && numberOfBytes > it->size){
-					it->removed= true;
-					baseAddress= (PVOID)(it->endAddress + 1);
-					freedCount += (it->size);
-				}
-			}
-		} else {
-			break;
-		}
-
-		/* FIXME
-		
-		auto it = this->writeablePEBlocks.findTracked((DWORD)baseAddress, 1);
-		if (it != this->writeablePEBlocks.nullMarker()){
-			Logger::getInstance()->write(LOG_INFO, "It's a tracked block. StartAddress= 0x%08x, EndAddress= 0x%08x, Size= 0x%08x, protection= %d\n", it->startAddress, it->endAddress, it->size, it->neededProtection);
-			if ((DWORD)baseAddress == it->startAddress && numberOfBytes <= it->size){
-				// Free is within the current region.
-				it->startAddress += numberOfBytes;
-				it->size -= numberOfBytes;
-				
-				freedCount += numberOfBytes;
-			} else {
-			}
-		}*/
-
-		#ifdef NEW_TRACKER
-		if (it == this->blocksInProcess.nullMarkerBlock())
-			break;
-		#else
-		if (it == this->executableBlocks.nullMarker())
-			break;
-		#endif
-
-
-		//break;
-	}
-
-	this->blocksInProcess.removeRemovedBlocks();
 	return true;
 }
 
@@ -1022,7 +964,7 @@ long UnpackingEngine::onShallowException(PEXCEPTION_POINTERS info)
         /* it's an executable block being tracked */
         /* set the block back to executable */
         ULONG _oldProtection;
-		Logger::getInstance()->write(LOG_INFO, "Trying to remove execute hook on 0x%08x, 0x%08x, 0x%08x, 0x%08x!", exceptionAddress, it->startAddress, it->size, (DWORD)it->neededProtection);
+		Logger::getInstance()->write(LOG_INFO, "Trying to remove execute hook on ExceptionAddress= 0x%08x, StartAddress= 0x%08x, Size= 0x%08x, NeededProtection= 0x%08x!", exceptionAddress, it->startAddress, it->size, (DWORD)it->neededProtection);
         auto ret = this->origNtProtectVirtualMemory(GetCurrentProcess(), (PVOID*)&it->startAddress, (PULONG)&it->size, it->neededProtection, &_oldProtection); // FIX: Need more analysis on why we dont see some NtProtectVirtualMemory
         if (ret != 0)
         {

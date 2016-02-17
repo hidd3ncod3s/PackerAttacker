@@ -296,6 +296,7 @@ public:
 						}
 					}
 				}
+				removeRemovedBlocks();
 				trackedMemoryBlocks.sort([](const TrackType & a, const TrackType & b) { return a.startAddress < b.startAddress; }); // sort it based on the startaddress
 				break;
 			}
@@ -313,6 +314,7 @@ public:
 		}
 		
 		Logger::getInstance()->write(LOG_INFO, "After startTracking\n");
+		printBlockTrackingInfo();
     }
 	
     void stopTrackingBlock(TrackType newBlock)
@@ -375,6 +377,7 @@ public:
 				}
 
 				it->removed= true;
+				removeRemovedBlocks();
 				trackedMemoryBlocks.sort([](const TrackType & a, const TrackType & b) { return a.startAddress < b.startAddress; }); // sort it based on the startaddress
 				break;
 			}

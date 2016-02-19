@@ -23,7 +23,12 @@ void loopme()
 
 UnpackingEngine* UnpackingEngine::instance = NULL;
 
+bool disableDeepException= true;
 bool _regionTracking= true;
+bool disableDMP= true;
+bool disableRDMP= true;
+bool disableLogging= false;
+int loggingLevel= 1;
 
 UnpackingEngine::UnpackingEngine(void)
 {
@@ -60,7 +65,9 @@ void UnpackingEngine::initialize()
     DWORD depFlags;
     BOOL depCantChange;
     GetProcessDEPPolicy(GetCurrentProcess(), &depFlags, &depCantChange);
-    this->simulateDisabledDEP = (depFlags & PROCESS_DEP_ENABLE) != PROCESS_DEP_ENABLE;
+    //this->simulateDisabledDEP = (depFlags & PROCESS_DEP_ENABLE) != PROCESS_DEP_ENABLE;
+
+	this->simulateDisabledDEP= false;
 
     if (this->simulateDisabledDEP && depCantChange)
          Logger::getInstance()->write(LOG_ERROR, "Cannot enable DEP for this process!");
@@ -96,7 +103,8 @@ void UnpackingEngine::initialize()
 
     this->hooks->doTransaction([=](){
         this->hooks->placeShallowExceptionHandlerHook(&UnpackingEngine::_onShallowException);
-        this->hooks->placeDeepExceptionHandlerHook(&UnpackingEngine::_onDeepException);
+		if (!disableDeepException)
+			this->hooks->placeDeepExceptionHandlerHook(&UnpackingEngine::_onDeepException);
 
 		HOOK_SET(this, this->hooks, NtProtectVirtualMemory);
         HOOK_SET(this, this->hooks, NtMapViewOfSection);
@@ -114,6 +122,7 @@ void UnpackingEngine::initialize()
     Logger::getInstance()->write(LOG_INFO, "Hooks ready!");
 
     hooksReady = true;
+	//disableLogging= true;
 }
 
 void UnpackingEngine::uninitialize()
@@ -230,6 +239,9 @@ void UnpackingEngine::dumpRemoteMemoryBlocks()
 
 void UnpackingEngine::dumpMemoryBlock(TrackedMemoryBlockV2 block, DWORD ep)
 {
+	if (disableDMP)
+		return;
+
     wchar_t fileName[MAX_PATH];
     swprintf(fileName, L"C:\\dumps\\[%d]_%d_0x%08x_to_0x%08x_EP_0x%08x_IDX_%d.DMP", this->processID, GetTickCount(), block.startAddress, block.endAddress, ep, ep - block.startAddress);
 
@@ -238,6 +250,9 @@ void UnpackingEngine::dumpMemoryBlock(TrackedMemoryBlockV2 block, DWORD ep)
 
 void UnpackingEngine::dumpMemoryBlock(TrackedMemoryBlock block, DWORD ep)
 {
+	if (disableDMP)
+		return;
+
     wchar_t fileName[MAX_PATH];
     swprintf(fileName, L"C:\\dumps\\[%d]_%d_0x%08x_to_0x%08x_EP_0x%08x_IDX_%d.DMP", this->processID, GetTickCount(), block.startAddress, block.endAddress, ep, ep - block.startAddress);
 
@@ -258,8 +273,11 @@ void UnpackingEngine::dumpMemoryRegion(DWORD ep)
 
 	if ( *(const unsigned char*)it->startAddress == 'M' && *(((const unsigned char*)it->startAddress) + 1) == 'Z' )
 		sprintf(fileName, "C:\\dumps\\[%d]_%d_0x%08x_to_0x%08x_EP_0x%08x_IDX_%d.exe_", this->processID, GetTickCount(), it->startAddress, it->endAddress, ep, ep - it->startAddress);
-	else
+	else{
+		if (disableRDMP)
+			return;
 		sprintf(fileName, "C:\\dumps\\[%d]_%d_0x%08x_to_0x%08x_EP_0x%08x_IDX_%d.RDMP", this->processID, GetTickCount(), it->startAddress, it->endAddress, ep, ep - it->startAddress);
+	}
 
 	Logger::getInstance()->write(LOG_INFO, "Filename= %s\n", fileName);
 
@@ -839,14 +857,14 @@ NTSTATUS WINAPI UnpackingEngine::onNtDelayExecution(BOOLEAN alertable, PLARGE_IN
 {
     Logger::getInstance()->write(LOG_INFO, "Sleep call detected (Low part: 0x%08x, High part: 0x%08x).", time->LowPart, time->HighPart);
 
-	if (time->HighPart == 0x80000000 && time->LowPart == 0){
+	/*if (time->HighPart == 0x80000000 && time->LowPart == 0){
 		Logger::getInstance()->write(LOG_ERROR, "Infinite sleep. Fixing it.");
 		time->HighPart= 0;
 	}
 
 	time->HighPart= 0;
 	time->LowPart= 0; //0x3B9ACA00; 
-	Logger::getInstance()->write(LOG_INFO, "Fixed sleep (Low part: 0x%08x, High part: 0x%08x).", time->LowPart, time->HighPart);
+	Logger::getInstance()->write(LOG_INFO, "Fixed sleep (Low part: 0x%08x, High part: 0x%08x).", time->LowPart, time->HighPart);*/
 
     return this->origNtDelayExecution(alertable, time);
 }
@@ -908,6 +926,10 @@ long UnpackingEngine::onShallowException(PEXCEPTION_POINTERS info)
     DWORD exceptionAddress = info->ExceptionRecord->ExceptionInformation[1];//(DWORD)info->ExceptionRecord->ExceptionAddress;
 
 	Logger::getInstance()->write(LOG_INFO, "Got an Exception!");
+	if (exceptionAddress == 0x00000000){
+		//loopme();
+		//return EXCEPTION_CONTINUE_EXECUTION;
+	}
 
     if (isWriteException) /* monitor writes to tracked PE sections */
     {
@@ -929,7 +951,7 @@ long UnpackingEngine::onShallowException(PEXCEPTION_POINTERS info)
             return EXCEPTION_CONTINUE_SEARCH; /* couldn't set page back to regular protection, wtf? */
         }
 
-        Logger::getInstance()->write(LOG_INFO, "STATUS_ACCESS_VIOLATION write on 0x%08x triggered write hook!", exceptionAddress);
+		Logger::getInstance()->write(LOG_INFO, "STATUS_ACCESS_VIOLATION write on 0x%08x triggered write hook! StartAddress= 0x%08x, EndAddress= 0x%08x, size= 0x%08x, ", exceptionAddress, it->startAddress, it->endAddress, it->size);
 
         /* writing to the section should work now */
         return EXCEPTION_CONTINUE_EXECUTION;

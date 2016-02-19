@@ -6,6 +6,7 @@
 #include <time.h>
 
 Logger* Logger::instance= NULL;
+extern bool disableLogging;
 
 Logger::Logger(void)
 {
@@ -28,6 +29,9 @@ void Logger::uninitialize()
 
 void Logger::write(const char* prefixFormat, const char* function, int lineNumber, std::string line)
 {
+	if (disableLogging)
+		return;
+
     assert(this->logFile);
     //assert(this->logFile->open());
 
@@ -43,6 +47,9 @@ void Logger::write(const char* prefixFormat, const char* function, int lineNumbe
 }
 void Logger::write(const char* prefixFormat, const char* function, int lineNumber, const char* format, ...)
 {
+	if (disableLogging)
+		return;
+
 	char buffer[4096];
     for (int i = 0; i < 4096; i++)
         buffer[i] = 0x00;

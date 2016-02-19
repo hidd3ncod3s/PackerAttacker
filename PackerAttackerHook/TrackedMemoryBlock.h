@@ -6,6 +6,7 @@
 #include "Logger.h"
 
 extern bool _regionTracking;
+extern int loggingLevel;
 
 struct TrackedMemoryBlock
 {
@@ -388,7 +389,8 @@ public:
 
 	void printBlockTrackingInfo()
 	{
-		//return;
+		if (loggingLevel != 0)
+			return;
 		auto it = trackedMemoryBlocks.begin();
         for (; it != trackedMemoryBlocks.end(); it++){
 			Logger::getInstance()->write(LOG_INFO, "StartAddress= 0x%08x, EndAddress= 0x%08x, Size= 0x%08x, Protection=  0x%08x, removed= %d\n", it->startAddress, it->endAddress, it->size, it->neededProtection, it->removed);
@@ -418,7 +420,8 @@ class MemoryRegionTracker
 
 	void printRegionTrackingInfo()
 	{
-		return;
+		if (loggingLevel != 0)
+			return;
 		auto it = trackedMemoryRegion.begin();
         for (; it != trackedMemoryRegion.end(); it++){
 			Logger::getInstance()->write(LOG_INFO, "StartAddress= 0x%08x, EndAddress= 0x%08x, Size= 0x%08x, removed= %d\n", it->startAddress, it->endAddress, it->size, it->removed);

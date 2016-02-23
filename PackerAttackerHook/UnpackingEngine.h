@@ -29,9 +29,24 @@
 		}\
     }
 
+/* used to define a hook */
+#define _HOOK_DEFINE_INTERNAL_NOPOST(reT, reTm, name, args, argnames) \
+    typedef reT (reTm *_orig ## name) args; /* define the function prototype */ \
+    _orig ## name orig ## name; /* create a pointer to the original function */ \
+    __declspec(dllexport) reT reTm on ## name args; /* declare the member-fucntion that will be called internal to the class */ \
+    __declspec(dllexport) static reT reTm _on ## name args /* declare the static function that acts as a hook callback and forwards the call into the member function */ \
+    { \
+		{\
+			SyncLockScopeGuard sg(getInstance()->lock); \
+			auto ret= getInstance()->on ## name argnames; \
+		}\
+		return getInstance()->orig ## name argnames; \
+    }
+
 /* these are just "variadic" wrappers for the _HOOK_DEFINE_INTERNAL macro */
 #define HOOK_DEFINE_1(reT, reTm, name, arg1) _HOOK_DEFINE_INTERNAL(reT, reTm, name, (arg1 a1), (a1));
 #define HOOK_DEFINE_2(reT, reTm, name, arg1, arg2) _HOOK_DEFINE_INTERNAL(reT, reTm, name, (arg1 a1, arg2 a2), (a1, a2));
+#define HOOK_DEFINE_2_NOPOST(reT, reTm, name, arg1, arg2) _HOOK_DEFINE_INTERNAL_NOPOST(reT, reTm, name, (arg1 a1, arg2 a2), (a1, a2));
 #define HOOK_DEFINE_3(reT, reTm, name, arg1, arg2, arg3) _HOOK_DEFINE_INTERNAL(reT, reTm, name, (arg1 a1, arg2 a2, arg3 a3), (a1, a2, a3));
 #define HOOK_DEFINE_4(reT, reTm, name, arg1, arg2, arg3, arg4) _HOOK_DEFINE_INTERNAL(reT, reTm, name, (arg1 a1, arg2 a2, arg3 a3, arg4 a4), (a1, a2, a3, a4));
 #define HOOK_DEFINE_5(reT, reTm, name, arg1, arg2, arg3, arg4, arg5) _HOOK_DEFINE_INTERNAL(reT, reTm, name, (arg1 a1, arg2 a2, arg3 a3, arg4 a4, arg5 a5), (a1, a2, a3, a4, a5));
@@ -44,7 +59,6 @@
 #define HOOK_GET_ORIG(object, library, name) object->orig ## name = (_orig ## name)GetProcAddress(LoadLibraryA(library), #name); assert(object->orig ## name);
 #define HOOK_SET(object, hooks, name) hooks->placeHook(&(PVOID&)object->orig ## name, &_on ## name);
 
-#define NEW_TRACKER 1
 
 class UnpackingEngine
 {
@@ -72,16 +86,7 @@ private:
 
     std::vector<std::pair<DWORD, DWORD>> PESections;
     
-#ifdef NEW_TRACKER
 	MemoryBlockTrackerV2<TrackedMemoryBlockV2> blocksInProcess;
-	/*MemoryBlockTrackerV2<TrackedMemoryBlockV2> writeablePEBlocks;
-    MemoryBlockTrackerV2<TrackedMemoryBlockV2> executableBlocks;
-    MemoryBlockTrackerV2<TrackedMemoryBlockV2> blacklistedBlocks;*/
-#else
-	MemoryBlockTracker<TrackedMemoryBlock> writeablePEBlocks;
-    MemoryBlockTracker<TrackedMemoryBlock> executableBlocks;
-    MemoryBlockTracker<TrackedMemoryBlock> blacklistedBlocks;
-#endif
 
     std::map<DWORD, MemoryBlockTracker<TrackedCopiedMemoryBlock>> remoteMemoryBlocks;
     std::map<DWORD, DWORD> suspendedThreads;
@@ -101,7 +106,7 @@ private:
     void dumpMemoryBlock(char* fileName, DWORD size, const unsigned char* data);
 	void dumpMemoryBlockW(wchar_t* fileName, DWORD size, const unsigned char* data);
     bool isSelfProcess(HANDLE process);
-	bool FreetheseBlocks(PVOID baseAddress, ULONG numberOfBytes);
+	ULONG GetNewNonWriteProtection(DWORD characteristics);
 	std::string retProtectionString(ULONG protectionbits);
     DWORD getProcessIdIfRemote(HANDLE process);
     ULONG processMemoryBlockFromHook(const char* source, DWORD address, DWORD size, ULONG newProtection, ULONG oldProtection, bool considerOldProtection);
@@ -126,7 +131,7 @@ private:
                 LPSECURITY_ATTRIBUTES, BOOL, DWORD, LPVOID, LPCWSTR,
                 LPSTARTUPINFOW, LPPROCESS_INFORMATION, PHANDLE);
     /* NtDelayExecution hook */
-    HOOK_DEFINE_2(NTSTATUS, NTAPI, NtDelayExecution, BOOLEAN, PLARGE_INTEGER);
+    HOOK_DEFINE_2_NOPOST(NTSTATUS, NTAPI, NtDelayExecution, BOOLEAN, PLARGE_INTEGER);
     /* NtAllocateVirtualMemory hook */
     HOOK_DEFINE_6(NTSTATUS, NTAPI, NtAllocateVirtualMemory, HANDLE, PVOID*, ULONG, PULONG, ULONG, ULONG);
 

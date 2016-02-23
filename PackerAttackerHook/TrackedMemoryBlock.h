@@ -243,32 +243,36 @@ public:
 			if (it->startAddress <= newBlock.startAddress && newBlock.startAddress <= it->endAddress){
 				// falling within current block
 
-				if(it->startAddress < newBlock.startAddress){
+				if(it->startAddress < newBlock.startAddress && newBlock.startAddress < it->endAddress){
 					// Starting from middle of the existing block.
-					trackedMemoryBlocks.push_back(TrackType(it->startAddress, (newBlock.startAddress - (it->startAddress)) + 1, it->neededProtection ));
+					Logger::getInstance()->write(LOG_INFO, "Starting from middle of the existing block.");
+					trackedMemoryBlocks.push_back(TrackType(it->startAddress, (newBlock.startAddress - (it->startAddress)) , it->neededProtection ));
 					it->size-= (newBlock.startAddress - it->startAddress);
 					it->startAddress= newBlock.startAddress;
 				}
 
 				if (it->startAddress == newBlock.startAddress){
 					// Starting from beginning of the existing block.
+					Logger::getInstance()->write(LOG_INFO, "Starting from beginning of the existing block.");
 
 					if (newBlock.endAddress == it->endAddress){
 						// TODO: Exact same size. Just update other information.
+						Logger::getInstance()->write(LOG_INFO, "Exact same size. Just update other information.");
 						it->neededProtection= newBlock.neededProtection;
 					} else {
 						if (newBlock.endAddress < it->endAddress){
 							// Ending before the end of current existing block.
-
+							Logger::getInstance()->write(LOG_INFO, "Ending before the end of current existing block.");
 							trackedMemoryBlocks.push_back(TrackType(newBlock.endAddress+1, (it->endAddress - (newBlock.endAddress+1)) + 1, it->neededProtection ));
 							it->endAddress= newBlock.endAddress;
 							it->size= newBlock.size;
 							// TODO: Just update other information.
 							it->neededProtection= newBlock.neededProtection;
-							break;
+							//break;
 						} else {
 							if (newBlock.endAddress > it->endAddress){
 								// cross over to next block.
+								Logger::getInstance()->write(LOG_INFO, "cross over to next block.");
 								it->endAddress= newBlock.endAddress;
 								it->size= newBlock.size;
 								// TODO: Just update other information.
@@ -281,11 +285,13 @@ public:
 
 									if (nx->endAddress <= it->endAddress){
 										// Complete overlap.
+										Logger::getInstance()->write(LOG_INFO, "Complete overlap.");
 										nx = std::next(nx, 1);
 										continue;
 									} else {
 										if (nx->endAddress > it->endAddress){
 											// Next block covers more area.
+											Logger::getInstance()->write(LOG_INFO, "Next block covers more area.");
 											trackedMemoryBlocks.push_back(TrackType(it->endAddress+1, (nx->endAddress - (it->endAddress+1)) + 1, nx->neededProtection ));
 											// TODO: Just update other information.
 											nx = std::next(nx, 1);
@@ -310,8 +316,8 @@ public:
 			// do the sorting now.
 			trackedMemoryBlocks.sort([](const TrackType & a, const TrackType & b) { return a.startAddress < b.startAddress; }); // sort it based on the startaddress
 
-			Logger::getInstance()->write(LOG_INFO, "After adding new block\n");
-			printBlockTrackingInfo();
+			//Logger::getInstance()->write(LOG_INFO, "After adding new block\n");
+			//printBlockTrackingInfo();
 		}
 		
 		Logger::getInstance()->write(LOG_INFO, "After startTracking\n");
@@ -329,27 +335,30 @@ public:
 			if (it->startAddress <= newBlock.startAddress && newBlock.startAddress <= it->endAddress){
 				// falling within current block
 
-				if(it->startAddress < newBlock.startAddress){
+				if(it->startAddress < newBlock.startAddress && newBlock.startAddress < it->endAddress){
 					// Starting from middle of the existing block.
-					trackedMemoryBlocks.push_back(TrackType(it->startAddress, (newBlock.startAddress - (it->startAddress)) + 1, it->neededProtection ));
+					Logger::getInstance()->write(LOG_INFO, "Starting from middle of the existing block.");
+					trackedMemoryBlocks.push_back(TrackType(it->startAddress, (newBlock.startAddress - (it->startAddress)) , it->neededProtection ));
 					it->size-= (newBlock.startAddress - it->startAddress);
 					it->startAddress= newBlock.startAddress;
 				}
 
 				if (it->startAddress == newBlock.startAddress){
 					// Starting from beginning of the existing block.
-
+					Logger::getInstance()->write(LOG_INFO, "Starting from beginning of the existing block.");
 					if (newBlock.endAddress == it->endAddress){
 						// TODO: Exact same size. Just update other information.
+						Logger::getInstance()->write(LOG_INFO, "Exact same size. Just update other information.");
 					} else {
 						if (newBlock.endAddress < it->endAddress){
 							// Ending before the end of current existing block.
-
+							Logger::getInstance()->write(LOG_INFO, "Ending before the end of current existing block.");
 							trackedMemoryBlocks.push_back(TrackType(newBlock.endAddress+1, (it->endAddress - (newBlock.endAddress+1)) + 1, it->neededProtection ));
-							break;
+							//break;
 						} else {
 							if (newBlock.endAddress > it->endAddress){
 								// cross over to next block.
+								Logger::getInstance()->write(LOG_INFO, "cross over to next block.");
 								it->endAddress= newBlock.endAddress;
 								it->size= newBlock.size;
 
@@ -360,11 +369,13 @@ public:
 
 									if (nx->endAddress <= it->endAddress){
 										// Complete overlap.
+										Logger::getInstance()->write(LOG_INFO, "Complete overlap.");
 										nx = std::next(nx, 1);
 										continue;
 									} else {
 										if (nx->endAddress > it->endAddress){
 											// Next block covers more area.
+											Logger::getInstance()->write(LOG_INFO, "Next block covers more area.");
 											trackedMemoryBlocks.push_back(TrackType(it->endAddress+1, (nx->endAddress - (it->endAddress+1)) + 1, nx->neededProtection ));
 											// TODO: Just update other information.
 											nx = std::next(nx, 1);

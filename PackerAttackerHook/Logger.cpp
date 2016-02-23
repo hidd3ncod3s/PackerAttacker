@@ -51,8 +51,9 @@ void Logger::write(const char* prefixFormat, const char* function, int lineNumbe
 		return;
 
 	char buffer[4096];
-    for (int i = 0; i < 4096; i++)
-        buffer[i] = 0x00;
+    //for (int i = 0; i < 4096; i++)
+    //    buffer[i] = 0x00;
+	memset(buffer, 0x00, 4096);
 
 	va_list marker;
 	va_start(marker, format);
@@ -64,12 +65,12 @@ void Logger::write(const char* prefixFormat, const char* function, int lineNumbe
 
 void Logger::writePrefix(const char* prefixFormat, const char* function, int lineNumber)
 {
-    time_t now = time(0);
-    struct tm  tstruct;
-    char timebuffer[128], buffer[512];
+    //time_t now = time(0);
+    //struct tm  tstruct;
+    char timebuffer[128]= "", buffer[512];
     
-    tstruct = *localtime(&now);
-    strftime(timebuffer, sizeof(timebuffer), "[%Y-%m-%d.%X]", &tstruct);
+    //tstruct = *localtime(&now);
+    //strftime(timebuffer, sizeof(timebuffer), "[%Y-%m-%d.%X]", &tstruct);
 
 	sprintf(buffer, prefixFormat, timebuffer, ::GetCurrentProcessId(), ::GetCurrentThreadId(), function, lineNumber);
 	this->logFile->write(buffer, strlen(buffer));

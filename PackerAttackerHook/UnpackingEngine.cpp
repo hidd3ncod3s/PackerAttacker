@@ -23,12 +23,12 @@ void loopme()
 
 UnpackingEngine* UnpackingEngine::instance = NULL;
 
-bool disableDeepException= true;
+bool disableDeepException= false;
 bool _regionTracking= true;
 bool disableDMP= true;
 bool disableRDMP= true;
 bool disableLogging= false;
-int loggingLevel= 1;
+int loggingLevel= 0;
 
 UnpackingEngine::UnpackingEngine(void)
 {
@@ -133,6 +133,60 @@ void UnpackingEngine::uninitialize()
     Logger::getInstance()->uninitialize();
 }
 
+/*
+0x00000020	Code section
+0x00000040	Initialized data section
+0x00000080	Uninitialized data section
+0x04000000	Section cannot be cached
+0x08000000	Section is not pageable
+0x10000000	Section is shared
+
+0x20000000	Executable section
+0x40000000	Readable section
+0x80000000	Writable section
+
+
+#define PAGE_NOACCESS          0x01     // winnt
+#define PAGE_READONLY          0x02     // winnt
+#define PAGE_READWRITE         0x04     // winnt
+#define PAGE_WRITECOPY         0x08     // winnt
+#define PAGE_EXECUTE           0x10     // winnt
+#define PAGE_EXECUTE_READ      0x20     // winnt
+#define PAGE_EXECUTE_READWRITE 0x40     // winnt
+#define PAGE_EXECUTE_WRITECOPY 0x80     // winnt
+#define PAGE_GUARD            0x100     // winnt
+#define PAGE_NOCACHE          0x200     // winnt
+*/
+
+ULONG UnpackingEngine::GetNewNonWriteProtection(DWORD characteristics)
+{
+	switch (characteristics & 0xE0000000)
+	{
+		case 0x80000000 + 0x40000000: // RW
+			return PAGE_READWRITE;
+		case 0x80000000 + 0x20000000: // WX
+		case 0x80000000 + 0x40000000 + 0x20000000: // RWX
+			return PAGE_EXECUTE_READWRITE;
+		default:
+			Logger::getInstance()->write(LOG_INFO, "ERROR: Unknown option. Fix me.!!");
+			return 0; // catch the bug return...
+	}
+
+}
+
+/*
+http://www.csn.ul.ie/~caolan/pub/winresdump/winresdump/doc/pefile2.html
+	0x00000020	Code section
+	0x00000040	Initialized data section
+	0x00000080	Uninitialized data section
+	0x04000000	Section cannot be cached
+	0x08000000	Section is not pageable
+	0x10000000	Section is shared
+	0x20000000	Executable section
+	0x40000000	Readable section
+	0x80000000	Writable section
+*/
+
 void UnpackingEngine::startTrackingPEMemoryBlocks()
 {
     auto mainModule = (BYTE*)GetModuleHandle(NULL);
@@ -169,35 +223,23 @@ void UnpackingEngine::startTrackingPEMemoryBlocks()
 
 		Logger::getInstance()->write(LOG_INFO, "PE section %s at 0x%08x to 0x%08x (char: 0x%08x)", sectionHeader->Name, destination, destination+size, sectionHeader->Characteristics);
 
-		#ifdef NEW_TRACKER
-        if (!CHECK_FLAG(sectionHeader->Characteristics, CHARACTERISTIC_WRITEABLE)) // || CHECK_FLAG(sectionHeader->Characteristics, CHARACTERISTIC_EXECUTABLE))
+        if (!CHECK_FLAG(sectionHeader->Characteristics, CHARACTERISTIC_WRITEABLE)){ // || CHECK_FLAG(sectionHeader->Characteristics, CHARACTERISTIC_EXECUTABLE))
+			this->trackedregions.startTrackingRegion(destination, size);
             continue; /* skip un-writeable sections */
-		#else
-        if (!CHECK_FLAG(sectionHeader->Characteristics, CHARACTERISTIC_WRITEABLE))
-            continue; /* skip un-writeable sections */
-
-        if (!CHECK_FLAG(sectionHeader->Characteristics, CHARACTERISTIC_EXECUTABLE))
-            continue; /* skip non-executable sections */
-		#endif
-
-
-
+		}
+		
         ULONG oldProtection;
-        auto ret = this->origNtProtectVirtualMemory(GetCurrentProcess(), (PVOID*)&destination, (PULONG)&size, PAGE_EXECUTE_READ, &oldProtection);
+        auto ret = this->origNtProtectVirtualMemory(GetCurrentProcess(), (PVOID*)&destination, (PULONG)&size, GetNewNonWriteProtection(sectionHeader->Characteristics) /*PAGE_EXECUTE_READ*/, &oldProtection);
         if (ret != 0)
         {
-            Logger::getInstance()->write(LOG_ERROR, "Failed to remove write bits from %s at 0x%08x (char: 0x%08x). GetLastError() == %d |  RET == 0x%08x", sectionHeader->Name, destination, sectionHeader->Characteristics, GetLastError(), ret);
+            Logger::getInstance()->write(LOG_ERROR, "Failed to remove permission bits from %s at 0x%08x (char: 0x%08x:0x%08x). GetLastError() == %d |  RET == 0x%08x", sectionHeader->Name, destination, sectionHeader->Characteristics, GetNewNonWriteProtection(sectionHeader->Characteristics),GetLastError(), ret);
             continue; /* failed to remove write privs ;( */
         }
 
-		#ifdef NEW_TRACKER
 		this->blocksInProcess.startTrackingBlock(destination, size, oldProtection);
-		#else
-		this->writeablePEBlocks.startTracking(destination, size, oldProtection);
-		#endif
-        
+		this->trackedregions.startTrackingRegion(destination, size);
 
-        Logger::getInstance()->write(LOG_INFO, "Placed hook on PE section %s at 0x%08x to 0x%08x (char: 0x%08x)", sectionHeader->Name, destination, destination+size, sectionHeader->Characteristics);
+        Logger::getInstance()->write(LOG_INFO, "Placed hook on PE section %s at 0x%08x to 0x%08x (char: 0x%08x:0x%08x)", sectionHeader->Name, destination, destination+size, sectionHeader->Characteristics, GetNewNonWriteProtection(sectionHeader->Characteristics));
     }
 
 }
@@ -371,79 +413,6 @@ DWORD UnpackingEngine::getProcessIdIfRemote(HANDLE process)
      return (pid == this->processID) ? 0 : pid;
 }
 
-#ifndef NEW_TRACKER
-ULONG UnpackingEngine::processMemoryBlockFromHook(const char* source, DWORD address, DWORD size, ULONG newProtection, ULONG oldProtection, bool considerOldProtection)
-{
-    PVOID _address = (PVOID)address;
-    DWORD _size = size;
-    ULONG _oldProtection = oldProtection;
-
-#ifdef NEW_TRACKER
-	auto it = this->blocksInProcess.findTracked(address, size);
-    if (it != this->blocksInProcess.nullMarker())
-#else
-    auto it = this->writeablePEBlocks.findTracked(address, size);
-    if (it != this->writeablePEBlocks.nullMarker())
-#endif
-    {
-        /* this is a PE section that we're currently tracking, let's make sure it stays that way */
-        if (IS_WRITEABLE_PROT(newProtection))
-        {
-            this->origNtProtectVirtualMemory(GetCurrentProcess(), &_address, &_size, REMOVE_WRITEABLE_PROT(newProtection), &_oldProtection);
-            Logger::getInstance()->write(LOG_INFO, "[%s] Persisting hook on PE section at 0x%08x - 0x%08x", source, address, address + size);
-        }
-        else
-            Logger::getInstance()->write(LOG_INFO, "[%s] Block detected as writeable PE block, no need to persist hook 0x%08x - 0x%08x", source, address, address + size);
-    }
-    else if (considerOldProtection && 
-            IS_WRITEABLE_PROT(newProtection) &&
-            !IS_WRITEABLE_PROT(oldProtection) &&
-            this->isPEMemory(address)) // newly writeable pe section
-    {
-        /* this is a PE section being set to writeable, track it */
-        this->origNtProtectVirtualMemory(GetCurrentProcess(), &_address, &_size, REMOVE_WRITEABLE_PROT(newProtection), &_oldProtection);
-		#ifdef NEW_TRACKER
-		this->blocksInProcess.startTracking(address, size, newProtection);
-		#else
-		this->writeablePEBlocks.startTracking(address, size, newProtection);
-		#endif
-        
-        Logger::getInstance()->write(LOG_INFO, "[%s] Placed write hook on PE section at 0x%08x - 0x%08x", source, address, address + size);
-    }
-    else if (IS_EXECUTABLE_PROT(newProtection))
-    {
-        /* page was set to executable, track the page and remove executable rights */
-		#ifdef NEW_TRACKER
-		if (!this->blocksInProcess.isTracked(address, size))
-        {
-            this->blocksInProcess.startTracking(address, size, (DWORD)newProtection);
-		#else
-		if (!this->blacklistedBlocks.isTracked(address, size))
-        {
-            this->executableBlocks.startTracking(address, size, (DWORD)newProtection);
-		#endif
-            this->origNtProtectVirtualMemory(GetCurrentProcess(), &_address, &_size, REMOVE_EXECUTABLE_PROT(newProtection), &_oldProtection);
-            Logger::getInstance()->write(LOG_INFO, "[%s] Placed execution hook on 0x%08x - 0x%08x", source, address, address + size);
-        }
-        else
-            Logger::getInstance()->write(LOG_WARN, "[%s] Failed to place execution hook on BLACKLISTED BLOCK 0x%08x - 0x%08x", source, address, address + size);
-    }
-    else
-    {
-		#ifdef NEW_TRACKER
-		auto it = this->blocksInProcess.findTracked(address, size);
-        if (it == this->blocksInProcess.nullMarker())
-		#else
-		auto it = this->executableBlocks.findTracked(address, size);
-        if (it == this->executableBlocks.nullMarker())
-		#endif
-            Logger::getInstance()->write(LOG_INFO, "[%s] No need to hook block 0x%08x - 0x%08x", source, address, address + size);
-    }
-
-    return _oldProtection;
-}
-
-#else
 ULONG UnpackingEngine::processMemoryBlockFromHook(const char* source, DWORD address, DWORD size, ULONG newProtection, ULONG oldProtection, bool considerOldProtection)
 {
     PVOID _address = (PVOID)address;
@@ -479,69 +448,7 @@ ULONG UnpackingEngine::processMemoryBlockFromHook(const char* source, DWORD addr
 	}
 
 	return _oldProtection;
-
-#if 0
-	auto it = this->blocksInProcess.findTracked(address, size);
-    if (it != this->blocksInProcess.nullMarker())
-    {
-        /* this is a PE section that we're currently tracking, let's make sure it stays that way */
-        if (IS_WRITEABLE_PROT(newProtection))
-        {
-            this->origNtProtectVirtualMemory(GetCurrentProcess(), &_address, &_size, REMOVE_WRITEABLE_PROT(newProtection), &_oldProtection);
-            Logger::getInstance()->write(LOG_INFO, "[%s] Persisting hook on PE section at 0x%08x - 0x%08x", source, address, address + size);
-        }
-        else
-            Logger::getInstance()->write(LOG_INFO, "[%s] Block detected as writeable PE block, no need to persist hook 0x%08x - 0x%08x", source, address, address + size);
-    }
-    else if (considerOldProtection && 
-            IS_WRITEABLE_PROT(newProtection) &&
-            !IS_WRITEABLE_PROT(oldProtection) &&
-            this->isPEMemory(address)) // newly writeable pe section
-    {
-        /* this is a PE section being set to writeable, track it */
-        this->origNtProtectVirtualMemory(GetCurrentProcess(), &_address, &_size, REMOVE_WRITEABLE_PROT(newProtection), &_oldProtection);
-		#ifdef NEW_TRACKER
-		this->blocksInProcess.startTracking(address, size, newProtection);
-		#else
-		this->writeablePEBlocks.startTracking(address, size, newProtection);
-		#endif
-        
-        Logger::getInstance()->write(LOG_INFO, "[%s] Placed write hook on PE section at 0x%08x - 0x%08x", source, address, address + size);
-    }
-    else if (IS_EXECUTABLE_PROT(newProtection))
-    {
-        /* page was set to executable, track the page and remove executable rights */
-		#ifdef NEW_TRACKER
-		if (!this->blocksInProcess.isTracked(address, size))
-        {
-            this->blocksInProcess.startTracking(address, size, (DWORD)newProtection);
-		#else
-		if (!this->blacklistedBlocks.isTracked(address, size))
-        {
-            this->executableBlocks.startTracking(address, size, (DWORD)newProtection);
-		#endif
-            this->origNtProtectVirtualMemory(GetCurrentProcess(), &_address, &_size, REMOVE_EXECUTABLE_PROT(newProtection), &_oldProtection);
-            Logger::getInstance()->write(LOG_INFO, "[%s] Placed execution hook on 0x%08x - 0x%08x", source, address, address + size);
-        }
-        else
-            Logger::getInstance()->write(LOG_WARN, "[%s] Failed to place execution hook on BLACKLISTED BLOCK 0x%08x - 0x%08x", source, address, address + size);
-    }
-    else
-    {
-		#ifdef NEW_TRACKER
-		auto it = this->blocksInProcess.findTracked(address, size);
-        if (it == this->blocksInProcess.nullMarker())
-		#else
-		auto it = this->executableBlocks.findTracked(address, size);
-        if (it == this->executableBlocks.nullMarker())
-		#endif
-            Logger::getInstance()->write(LOG_INFO, "[%s] No need to hook block 0x%08x - 0x%08x", source, address, address + size);
-    }
-
-    return _oldProtection;
-#endif
 }
-#endif
 
 /*
 #define PAGE_NOACCESS          0x01     // winnt
@@ -646,18 +553,6 @@ std::string UnpackingEngine::retProtectionString(ULONG protectionbits)
 	return protectionstring;
 }
 
-
-/* This function needs to rewritten to handle all types of blocks. */
-bool UnpackingEngine::FreetheseBlocks(PVOID baseAddress, ULONG numberOfBytes)
-{
-
-	this->blocksInProcess.stopTrackingBlock((DWORD) baseAddress, numberOfBytes);
-	return true;
-}
-
-
-
-
 NTSTATUS UnpackingEngine::onNtProtectVirtualMemory(HANDLE process, PVOID* baseAddress, PULONG numberOfBytes, ULONG newProtection, PULONG OldProtection)
 {
     /* do original protection */
@@ -678,7 +573,7 @@ NTSTATUS UnpackingEngine::onNtProtectVirtualMemory(HANDLE process, PVOID* baseAd
         *OldProtection = _oldProtection;
 
 	/*if ((DWORD)*baseAddress == 0x75721000){
-		loopme();
+		//loopme();
 	}*/
 
     if (ret == 0 && this->hooksReady && this->isSelfProcess(process))
@@ -754,35 +649,15 @@ NTSTATUS WINAPI UnpackingEngine::onNtCreateThread(
         {
             /* the thread is in this process, check if it is starting on a tracked executable block */
 
-			#ifdef NEW_TRACKER
 			auto it = this->blocksInProcess.findTrackedBlock(ThreadContext->Eip, 1);
 			if (it != this->blocksInProcess.nullMarkerBlock())
-			#else
-			auto it = this->executableBlocks.findTracked(ThreadContext->Eip, 1);
-            if (it != this->executableBlocks.nullMarker())
-			#endif
             {
                 /* it's an executable block being tracked */
                 /* set the block back to executable */
                 ULONG _oldProtection;
                 auto ret = this->origNtProtectVirtualMemory(GetCurrentProcess(), (PVOID*)&it->startAddress, (PULONG)&it->size, (DWORD)it->neededProtection, &_oldProtection);
-                if (ret == 0)
-                {
-                    /* dump the motherfucker and stop tracking it */
-					#ifdef NEW_TRACKER
-					this->blocksInProcess.startTrackingBlock(*it);
-					#else
-					this->blacklistedBlocks.startTracking(*it);
-					#endif
-
-                    
+                if (ret == 0){
                     this->dumpMemoryBlock(*it, ThreadContext->Eip);
-
-					#ifdef NEW_TRACKER
-					this->blocksInProcess.stopTrackingBlock(*it);
-					#else
-					this->executableBlocks.stopTracking(it);
-					#endif
                 }
             }
         }
@@ -795,8 +670,6 @@ NTSTATUS WINAPI UnpackingEngine::onNtMapViewOfSection(
     HANDLE SectionHandle, HANDLE ProcessHandle, PVOID *BaseAddress, ULONG ZeroBits, ULONG CommitSize,
     PLARGE_INTEGER SectionOffset, PULONG ViewSize, SECTION_INHERIT InheritDisposition, ULONG AllocationType, ULONG Protect)
 {
-	Logger::getInstance()->write(LOG_INFO, "PRE-NtMapViewOfSection(TargetPID %d, Address 0x%08x, Size 0x%08x)\n", GetProcessId(ProcessHandle), (DWORD)*BaseAddress, (DWORD)*ViewSize);
-
     if (this->hooksReady)
         Logger::getInstance()->write(LOG_INFO, "PRE-NtMapViewOfSection(TargetPID %d, Address 0x%08x, Size 0x%08x)\n", GetProcessId(ProcessHandle), (DWORD)*BaseAddress, (DWORD)*ViewSize);
 
@@ -857,16 +730,22 @@ NTSTATUS WINAPI UnpackingEngine::onNtDelayExecution(BOOLEAN alertable, PLARGE_IN
 {
     Logger::getInstance()->write(LOG_INFO, "Sleep call detected (Low part: 0x%08x, High part: 0x%08x).", time->LowPart, time->HighPart);
 
-	/*if (time->HighPart == 0x80000000 && time->LowPart == 0){
+	if (time->HighPart == 0x80000000 && time->LowPart == 0){
 		Logger::getInstance()->write(LOG_ERROR, "Infinite sleep. Fixing it.");
-		time->HighPart= 0;
+		//time->HighPart= 0;
+		//loopme();
+	} else {
+		//time->HighPart= 0;
+		//time->LowPart= 0; //0x3B9ACA00; 
+		//Logger::getInstance()->write(LOG_INFO, "Fixed sleep (Low part: 0x%08x, High part: 0x%08x).", time->LowPart, time->HighPart);
 	}
 
-	time->HighPart= 0;
+	/*time->HighPart= 0;
 	time->LowPart= 0; //0x3B9ACA00; 
 	Logger::getInstance()->write(LOG_INFO, "Fixed sleep (Low part: 0x%08x, High part: 0x%08x).", time->LowPart, time->HighPart);*/
 
-    return this->origNtDelayExecution(alertable, time);
+	return STATUS_SUCCESS;
+    //return this->origNtDelayExecution(alertable, time);
 }
 
 NTSTATUS WINAPI UnpackingEngine::onNtFreeVirtualMemory(HANDLE process, PVOID* baseAddress, PULONG RegionSize, ULONG FreeType)
@@ -876,8 +755,11 @@ NTSTATUS WINAPI UnpackingEngine::onNtFreeVirtualMemory(HANDLE process, PVOID* ba
 	Logger::getInstance()->write(LOG_INFO, "PST-NtFreeVirtualMemory: TargetPID %d, Address 0x%08x, RegionSize 0x%08x, FreeType 0x%08x(%s)", GetProcessId(process), (DWORD)*baseAddress, (DWORD)*RegionSize, FreeType, retProtectionString(FreeType));
 	
 	if (ret == STATUS_SUCCESS && this->hooksReady && this->isSelfProcess(process)){
-		FreetheseBlocks(*baseAddress, *RegionSize);
-        this->trackedregions.stopTrackingRegion((DWORD)*baseAddress, (DWORD)*RegionSize);
+		Logger::getInstance()->write(LOG_INFO, "Free this block.");
+		this->blocksInProcess.stopTrackingBlock((DWORD) *baseAddress, *RegionSize);
+		Logger::getInstance()->write(LOG_INFO, "Freed the block now free this region.");
+         this->trackedregions.stopTrackingRegion((DWORD)*baseAddress, (DWORD)*RegionSize);
+		Logger::getInstance()->write(LOG_INFO, "Freed the region.");
 	}
 	return ret;
 }
@@ -890,7 +772,7 @@ NTSTATUS WINAPI UnpackingEngine::onNtAllocateVirtualMemory(HANDLE ProcessHandle,
     this->inAllocationHook = true;
 
 	/*if (*BaseAddress == 0x00000000 && Protect == PAGE_EXECUTE_READWRITE){ // Debug
-		   loopme();
+		   //loopme();
 	}*/
 
     if (this->hooksReady)
@@ -952,6 +834,10 @@ long UnpackingEngine::onShallowException(PEXCEPTION_POINTERS info)
         }
 
 		Logger::getInstance()->write(LOG_INFO, "STATUS_ACCESS_VIOLATION write on 0x%08x triggered write hook! StartAddress= 0x%08x, EndAddress= 0x%08x, size= 0x%08x, ", exceptionAddress, it->startAddress, it->endAddress, it->size);
+
+		/*if (exceptionAddress == 0x02d60000)
+			//loopme();
+			*/
 
         /* writing to the section should work now */
         return EXCEPTION_CONTINUE_EXECUTION;

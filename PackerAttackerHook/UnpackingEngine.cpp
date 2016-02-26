@@ -23,12 +23,12 @@ void loopme()
 
 UnpackingEngine* UnpackingEngine::instance = NULL;
 
-bool disableDeepException= false;
+bool disableDeepException= true;
 bool _regionTracking= true;
 bool disableDMP= true;
 bool disableRDMP= true;
 bool disableLogging= false;
-int loggingLevel= 0;
+int loggingLevel= 1;
 
 UnpackingEngine::UnpackingEngine(void)
 {
@@ -815,7 +815,7 @@ long UnpackingEngine::onShallowException(PEXCEPTION_POINTERS info)
 
     if (isWriteException) /* monitor writes to tracked PE sections */
     {
-        auto sg = this->lock->enterWithScopeGuard();
+		SyncLockScopeGuard sg(getInstance()->lock);
 
 		auto it = this->blocksInProcess.findTrackedBlock(exceptionAddress, 1);
 		if (it == this->blocksInProcess.nullMarkerBlock())

@@ -26,7 +26,8 @@ public:
     void initialize(std::string fileName);
     void uninitialize();
 
-    void write(const char* prefixFormat, const char* function, int lineNumber, std::string line);
+    //void write(const char* prefixFormat, const char* function, int lineNumber, std::string line);
+	void Logger::write(const char* prefixFormat, const char* function,  const char* line, int lineNumber);
     void write(const char* prefixFormat, const char* function, int lineNumber, const char* format, ...);
 
 private:

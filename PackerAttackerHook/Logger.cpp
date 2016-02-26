@@ -27,7 +27,7 @@ void Logger::uninitialize()
     delete this->logFile;
 }
 
-void Logger::write(const char* prefixFormat, const char* function, int lineNumber, std::string line)
+void Logger::write(const char* prefixFormat, const char* function,  const char* line, int lineNumber)
 {
 	if (disableLogging)
 		return;
@@ -35,12 +35,14 @@ void Logger::write(const char* prefixFormat, const char* function, int lineNumbe
     assert(this->logFile);
     //assert(this->logFile->open());
 
+	unsigned int linelength= strlen(line);
+
 	//auto sg = this->lock->enterWithScopeGuard();
 
     this->writePrefix(prefixFormat, function, lineNumber);
-    this->logFile->write(line.c_str(), line.length());
+    this->logFile->write(line, linelength);
 
-    if (line[line.length() - 1] != '\n')
+    if (line[linelength - 1] != '\n')
         this->logFile->write("\n", 1);
 
     this->logFile->flush();
@@ -60,7 +62,7 @@ void Logger::write(const char* prefixFormat, const char* function, int lineNumbe
 	vsprintf_s(buffer, sizeof(buffer), format, marker);
 	va_end(marker);
 
-    this->write(prefixFormat, function, lineNumber, std::string(buffer));
+    this->write(prefixFormat, function, buffer, lineNumber);
 }
 
 void Logger::writePrefix(const char* prefixFormat, const char* function, int lineNumber)

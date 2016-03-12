@@ -28,7 +28,7 @@ bool _regionTracking= true;
 bool disableDMP= true;
 bool disableRDMP= true;
 bool disableLogging= false;
-int loggingLevel= 1;
+int loggingLevel= 0;
 
 UnpackingEngine::UnpackingEngine(void)
 {
@@ -78,7 +78,12 @@ void UnpackingEngine::initialize()
     HOOK_GET_ORIG(this, "ntdll.dll", NtProtectVirtualMemory);
     HOOK_GET_ORIG(this, "ntdll.dll", NtWriteVirtualMemory);
     HOOK_GET_ORIG(this, "ntdll.dll", NtCreateThread);
-    HOOK_GET_ORIG(this, "ntdll.dll", NtMapViewOfSection);
+    
+	HOOK_GET_ORIG(this, "ntdll.dll", NtOpenSection);
+	HOOK_GET_ORIG(this, "ntdll.dll", NtCreateSection);
+	HOOK_GET_ORIG(this, "ntdll.dll", NtMapViewOfSection);
+	HOOK_GET_ORIG(this, "ntdll.dll", NtUnmapViewOfSection);
+
     HOOK_GET_ORIG(this, "ntdll.dll", NtResumeThread);
     HOOK_GET_ORIG(this, "ntdll.dll", NtDelayExecution);
     HOOK_GET_ORIG(this, "ntdll.dll", NtAllocateVirtualMemory);
@@ -89,7 +94,12 @@ void UnpackingEngine::initialize()
 	Logger::getInstance()->write(LOG_INFO, "NtProtectVirtualMemory= %08x", this->origNtProtectVirtualMemory);
 	Logger::getInstance()->write(LOG_INFO, "NtWriteVirtualMemory= %08x", this->origNtWriteVirtualMemory);
 	Logger::getInstance()->write(LOG_INFO, "NtCreateThread= %08x", this->origNtCreateThread);
-	Logger::getInstance()->write(LOG_INFO, "NtMapViewOfSection= %08x", this->origNtMapViewOfSection);
+
+	Logger::getInstance()->write(LOG_INFO, "NtOpenSection= 0x%08x", this->origNtOpenSection);
+	Logger::getInstance()->write(LOG_INFO, "NtCreateSection= 0x%08x", this->origNtCreateSection);
+	Logger::getInstance()->write(LOG_INFO, "NtMapViewOfSection= 0x%08x", this->origNtMapViewOfSection);
+	Logger::getInstance()->write(LOG_INFO, "NtUnmapViewOfSection= 0x%08x", this->origNtUnmapViewOfSection);
+
 	Logger::getInstance()->write(LOG_INFO, "NtResumeThread= %08x", this->origNtResumeThread);
 	Logger::getInstance()->write(LOG_INFO, "NtDelayExecution= %08x", this->origNtDelayExecution);
 	Logger::getInstance()->write(LOG_INFO, "NtAllocateVirtualMemory= %08x", this->origNtAllocateVirtualMemory);
@@ -107,9 +117,13 @@ void UnpackingEngine::initialize()
 			this->hooks->placeDeepExceptionHandlerHook(&UnpackingEngine::_onDeepException);
 
 		HOOK_SET(this, this->hooks, NtProtectVirtualMemory);
-        HOOK_SET(this, this->hooks, NtMapViewOfSection);
         HOOK_SET(this, this->hooks, NtAllocateVirtualMemory);
 		HOOK_SET(this, this->hooks, NtFreeVirtualMemory);
+
+		HOOK_SET(this, this->hooks, NtOpenSection);
+		HOOK_SET(this, this->hooks, NtCreateSection);
+        HOOK_SET(this, this->hooks, NtMapViewOfSection);
+		HOOK_SET(this, this->hooks, NtUnmapViewOfSection);
 
         HOOK_SET(this, this->hooks, NtWriteVirtualMemory);
         HOOK_SET(this, this->hooks, NtCreateThread);
@@ -666,18 +680,47 @@ NTSTATUS WINAPI UnpackingEngine::onNtCreateThread(
     return this->origNtCreateThread(ThreadHandle, DesiredAccess, ObjectAttributes, ProcessHandle, ClientId, ThreadContext, InitialTeb, CreateSuspended);
 }
 
+NTSTATUS WINAPI UnpackingEngine::onNtOpenSection( PHANDLE pSectionHandle, ACCESS_MASK DesiredAccess, POBJECT_ATTRIBUTES pObjectAttributes)
+{
+	Logger::getInstance()->write(LOG_INFO, "PRE-NtOpenSection(pSectionHandle 0x%08x, DesiredAccess 0x%08x, pObjectAttributes 0x%08x)\n", pSectionHandle, DesiredAccess, pObjectAttributes);
+
+    auto ret = this->origNtOpenSection( pSectionHandle, DesiredAccess, pObjectAttributes);
+
+	if (ret == STATUS_SUCCESS){
+		Logger::getInstance()->write(LOG_INFO, "PST-NtOpenSection(SectionHandle 0x%08x, DesiredAccess 0x%08x, pObjectAttributes 0x%08x)\n", *pSectionHandle, DesiredAccess, pObjectAttributes);
+	} else {
+		Logger::getInstance()->write(LOG_INFO, "PST-NtOpenSection(DesiredAccess 0x%08x, pObjectAttributes 0x%08x)\n", DesiredAccess, pObjectAttributes);
+	}
+
+    return ret;
+}
+
+NTSTATUS WINAPI UnpackingEngine::onNtCreateSection(PHANDLE pSectionHandle, ACCESS_MASK DesiredAccess, POBJECT_ATTRIBUTES pObjectAttributes, PLARGE_INTEGER pMaximumSize, ULONG SectionPageProtection, ULONG AllocationAttributes, HANDLE FileHandle)
+{
+	Logger::getInstance()->write(LOG_INFO, "PRE-NtCreateSection(pSectionHandle 0x%08x, DesiredAccess 0x%08x, pObjectAttributes 0x%08x, pMaximumSize 0x%08x, SectionPageProtection 0x%08x, AllocationAttributes 0x%08x, FileHandle 0x%08x)\n", pSectionHandle, DesiredAccess, pObjectAttributes, pMaximumSize, SectionPageProtection, AllocationAttributes, FileHandle);
+
+    auto ret = this->origNtCreateSection( pSectionHandle, DesiredAccess, pObjectAttributes, pMaximumSize, SectionPageProtection, AllocationAttributes, FileHandle);
+	if (ret == STATUS_SUCCESS){
+		Logger::getInstance()->write(LOG_INFO, "PST-NtCreateSection(SectionHandle 0x%08x, DesiredAccess 0x%08x, pObjectAttributes 0x%08x, pMaximumSize 0x%08x, SectionPageProtection 0x%08x, AllocationAttributes 0x%08x, FileHandle 0x%08x)\n", *pSectionHandle, DesiredAccess, pObjectAttributes, pMaximumSize, SectionPageProtection, AllocationAttributes, FileHandle);
+	} else {
+		Logger::getInstance()->write(LOG_INFO, "PST-NtCreateSection(DesiredAccess 0x%08x, pObjectAttributes 0x%08x, pMaximumSize 0x%08x, SectionPageProtection 0x%08x, AllocationAttributes 0x%08x, FileHandle 0x%08x)\n", DesiredAccess, pObjectAttributes, pMaximumSize, SectionPageProtection, AllocationAttributes, FileHandle);
+	}
+	
+    return ret;
+}
+
 NTSTATUS WINAPI UnpackingEngine::onNtMapViewOfSection(
     HANDLE SectionHandle, HANDLE ProcessHandle, PVOID *BaseAddress, ULONG ZeroBits, ULONG CommitSize,
     PLARGE_INTEGER SectionOffset, PULONG ViewSize, SECTION_INHERIT InheritDisposition, ULONG AllocationType, ULONG Protect)
 {
     if (this->hooksReady)
-        Logger::getInstance()->write(LOG_INFO, "PRE-NtMapViewOfSection(TargetPID %d, Address 0x%08x, Size 0x%08x)\n", GetProcessId(ProcessHandle), (DWORD)*BaseAddress, (DWORD)*ViewSize);
+        Logger::getInstance()->write(LOG_INFO, "PRE-NtMapViewOfSection(SectionHandle 0x%08x,TargetPID %d, Address 0x%08x, Size 0x%08x)\n", SectionHandle, GetProcessId(ProcessHandle), (DWORD)*BaseAddress, (DWORD)*ViewSize);
 
     auto ret = this->origNtMapViewOfSection(SectionHandle, ProcessHandle, BaseAddress, ZeroBits, CommitSize,
                                             SectionOffset, ViewSize, InheritDisposition, AllocationType, Protect);
 
     if (this->hooksReady)
-        Logger::getInstance()->write(LOG_INFO, "PST-NtMapViewOfSection(TargetPID %d, Address is 0x%08x, Size 0x%08x, Protect 0x%08x) RET: 0x%08x\n", GetProcessId(ProcessHandle), (DWORD)*BaseAddress, (DWORD)*ViewSize, Protect, ret);
+        Logger::getInstance()->write(LOG_INFO, "PST-NtMapViewOfSection(SectionHandle 0x%08x,TargetPID %d, Address 0x%08x, Size 0x%08x, Protect 0x%08x(%s))\n", SectionHandle, GetProcessId(ProcessHandle), (DWORD)*BaseAddress, (DWORD)*ViewSize, Protect, retProtectionString(Protect).c_str());
 
     if (ret == 0 && this->hooksReady)
     {
@@ -700,6 +743,23 @@ NTSTATUS WINAPI UnpackingEngine::onNtMapViewOfSection(
             delete [] buffer;
         }
     }
+
+    return ret;
+}
+
+NTSTATUS WINAPI UnpackingEngine::onNtUnmapViewOfSection(HANDLE SectionHandle, PVOID  BaseAddress)
+{
+	Logger::getInstance()->write(LOG_INFO, "PRE-NtUnmapViewOfSection(SectionHandle 0x%08x, BaseAddress 0x%08x)\n", SectionHandle, BaseAddress);
+
+	auto ret= this->origNtUnmapViewOfSection(SectionHandle, BaseAddress);
+	if (ret == STATUS_SUCCESS && this->hooksReady){
+		/*Logger::getInstance()->write(LOG_INFO, "Free this block.");
+		this->blocksInProcess.stopTrackingBlock((DWORD) *baseAddress, *RegionSize);
+		Logger::getInstance()->write(LOG_INFO, "Freed the block now free this region.");
+
+         this->trackedregions.stopTrackingRegion((DWORD)*baseAddress, (DWORD)*RegionSize);
+		Logger::getInstance()->write(LOG_INFO, "Freed the region.");*/
+	}
 
     return ret;
 }

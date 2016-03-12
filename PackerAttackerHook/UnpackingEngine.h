@@ -119,10 +119,7 @@ private:
     HOOK_DEFINE_8(NTSTATUS, NTAPI, NtCreateThread, 
                 PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTES, HANDLE,
                 PCLIENT_ID, PCONTEXT, PINITIAL_TEB, BOOLEAN);
-    /* NtMapViewOfSection hook */
-    HOOK_DEFINE_10(NTSTATUS, NTAPI, NtMapViewOfSection,
-                HANDLE, HANDLE, PVOID*, ULONG, ULONG, PLARGE_INTEGER,
-                OUT PULONG, SECTION_INHERIT, ULONG,  ULONG);
+    
     /* NtResumeThread hook */
     HOOK_DEFINE_2(NTSTATUS, NTAPI, NtResumeThread, HANDLE, PULONG);
     /* CreateProcessInternal hook */
@@ -137,6 +134,11 @@ private:
 
 	/* NtFreeVirtualMemory hook */
     HOOK_DEFINE_4(NTSTATUS, NTAPI, NtFreeVirtualMemory, HANDLE, PVOID*, PULONG, ULONG);
+
+	HOOK_DEFINE_3(NTSTATUS, NTAPI, NtOpenSection, PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTES);
+	HOOK_DEFINE_7(NTSTATUS, NTAPI, NtCreateSection, PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTES, PLARGE_INTEGER, ULONG, ULONG, HANDLE);
+    HOOK_DEFINE_10(NTSTATUS, NTAPI, NtMapViewOfSection, HANDLE, HANDLE, PVOID*, ULONG, ULONG, PLARGE_INTEGER, OUT PULONG, SECTION_INHERIT, ULONG,  ULONG); /* NtMapViewOfSection hook */
+	HOOK_DEFINE_2(NTSTATUS, NTAPI, NtUnmapViewOfSection, HANDLE, PVOID);
 
     /* exception handler for hooking execution on tracked pages */
     long onShallowException(PEXCEPTION_POINTERS info);
